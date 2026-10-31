@@ -7,20 +7,22 @@
 # nothing else reaches the protocol stream. The cache geometry is fixed rather than detected, so
 # the counts do not depend on the host's processor.
 #
-# Usage: run-benchmarks.sh <executable> <dump directory>
+# Usage: run-benchmarks.sh <executable> <dump directory> [measured iterations per benchmark]
 set -euo pipefail
 executable=$1
 dumps=$2
+iterations=${3:-}
 rm -rf "$dumps"
 mkdir -p "$dumps"
 exec 3>&1 1>&2
 export LD_PRELOAD=/opt/perfshim.so
 export SWIFT_DETERMINISTIC_HASHING=1
+if [ -n "$iterations" ]; then export BENCHMARK_HARNESS_ITERATIONS="$iterations"; fi
 exec /opt/valgrind/bin/valgrind \
     --tool=callgrind \
     --cache-sim=yes --branch-sim=yes \
     --I1=32768,8,64 --D1=32768,8,64 --LL=8388608,16,64 \
-    --collect-atstart=no \
+    --collect-atstart=no --instr-atstart=no \
     --callgrind-out-file="$dumps/callgrind.out" \
     --log-file="$dumps/valgrind.log" \
     "$executable" --input-fd 0 --output-fd 3 --quiet true

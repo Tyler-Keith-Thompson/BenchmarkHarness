@@ -84,9 +84,16 @@ harness-run *args="": harness
 harness-test:
     cd {{PROJECT_ROOT}}/Harness && {{SWIFT}} test
 
-[doc("Record the benchmarks' simulated counts as a baseline (default main), in a Linux VM; stable on a busy machine")]
-bench-simulated name="main": harness
-    {{PROJECT_ROOT}}/Harness/.build/release/benchmark-harness baseline update {{name}} --package-path {{PROJECT_ROOT}}/Benchmarks
+[doc("Record the benchmarks' simulated counts (Callgrind in a Linux VM; steady on a busy machine) as the simulated baseline, e.g. just bench-simulated, or just bench-simulated --target X")]
+bench-simulated *args="": (_simulated-baseline "simulated" args)
+
+[doc("Record simulated counts as simulated-current and compare them against the simulated baseline, e.g. just bench-simulated-compare --target X")]
+bench-simulated-compare *args="": (_simulated-baseline "simulated-current" args)
+    cd {{PROJECT_ROOT}}/Benchmarks && {{SWIFT}} package --allow-writing-to-package-directory benchmark baseline compare simulated simulated-current {{args}}
+
+[private]
+_simulated-baseline name args: harness
+    {{PROJECT_ROOT}}/Harness/.build/release/benchmark-harness baseline update {{name}} --package-path {{PROJECT_ROOT}}/Benchmarks {{args}}
 
 [doc('Generate an Xcode project from the Bazel graph and open it')]
 generate *args="":

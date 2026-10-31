@@ -29,7 +29,19 @@ public struct SimulatedBaselineRecorder: Sendable {
     /// The guest's virtual processors.
     public var cpus: Int = 4
     /// The guest's memory, in gibibytes.
-    public var memoryGiB: Int = 8
+    public var memoryGiB: Int = 16
+    /// The iterations of each benchmark that are measured.
+    ///
+    /// Simulated counts don't depend on time, so a benchmark's own wall-clock limit doesn't apply:
+    /// it measures exactly this many iterations, or its own `maxIterations` if fewer, however busy
+    /// the machine is. Its own warmup iterations still run first. Three let the median discard
+    /// the first, coldest iteration.
+    public var iterations: Int = 3
+    /// The benchmark targets measured at once, each in its own Callgrind process.
+    ///
+    /// Callgrind runs a process's threads one at a time, so separate targets are what use the
+    /// guest's processors. Simulated counts don't depend on load, so this changes no result.
+    public var jobs: Int = 4
 
     /// A recorder for the package at `packagePath`.
     public init(packagePath: URL, baselineName: String, cachePath: URL) {
@@ -47,18 +59,26 @@ public struct SimulatedBaselineRecorder: Sendable {
     ///
     /// - Returns: The baseline written.
     public func record() async throws -> BenchmarkBaseline {
-        let filters = try self.filters.map { try Regex($0) }
-        let skips = try self.skips.map { try Regex($0) }
+        // Compiled here only to reject a bad pattern before booting; each target compiles its own,
+        // because a Regex can't cross into the tasks that measure targets concurrently.
+        _ = try self.filters.map { try Regex($0) }
+        _ = try self.skips.map { try Regex($0) }
         let package = packagePath.standardizedFileURL.resolvingSymlinksInPath()
         let sourceRoot = Self.sourceRoot(of: package)
         let relativePackage = String(package.path.dropFirst(sourceRoot.path.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let guestPackage = relativePackage.isEmpty ? "/work" : "/work/\(relativePackage)"
+        // The checkout keeps its directory name in the guest, because SwiftPM names a path
+        // dependency after its directory: `.package(path: "..")` must still be the same package.
+        let guestRoot = "/work/\(sourceRoot.lastPathComponent)"
+        let guestPackage = relativePackage.isEmpty ? guestRoot : "\(guestRoot)/\(relativePackage)"
 
         let shared = cachePath.appending(path: "guest")
-        let files = shared.appending(path: "files")
-        let dumpsRoot = shared.appending(path: "dumps")
         try FileManager.default.createDirectory(at: shared, withIntermediateDirectories: true)
-        try Self.installGuestFiles(into: files)
+        let files = try Self.installGuestFiles(in: shared)
+        let guestFiles = "/harness/\(files.lastPathComponent)"
+        // Each run has its own dumps, so concurrent runs never read each other's.
+        let run = "\(ProcessInfo.processInfo.processIdentifier)-\(UUID().uuidString.prefix(8))"
+        let dumpsRoot = shared.appending(path: "dumps").appending(path: run)
+        let guestDumpsRoot = "/harness/dumps/\(run)"
 
         let kernel = try await Self.kernel(in: cachePath)
         let valgrindSource = try await PinnedDownload.valgrindSource.fetch(into: shared.appending(path: "downloads"))
@@ -80,7 +100,7 @@ public struct SimulatedBaselineRecorder: Sendable {
                     .init(hostPath: sourceRoot, guestPath: "/source", readOnly: true),
                 ],
                 proxySocket: socket,
-                bridge: "/harness/files/proxy-bridge.pl"
+                bridge: "\(guestFiles)/proxy-bridge.pl"
             )
         } catch {
             await proxy.stop()
@@ -90,16 +110,18 @@ public struct SimulatedBaselineRecorder: Sendable {
             let baseline = try await measure(
                 in: guest,
                 package: package,
+                guestRoot: guestRoot,
                 guestPackage: guestPackage,
                 scratch: scratch,
                 valgrindSource: "/harness/downloads/\(valgrindSource.lastPathComponent)",
                 valgrindArchive: "/harness/\(valgrindArchive)",
+                guestFiles: guestFiles,
                 dumpsRoot: dumpsRoot,
-                filters: filters,
-                skips: skips
+                guestDumpsRoot: guestDumpsRoot
             )
             await guest.shutdown()
             await proxy.stop()
+            try? FileManager.default.removeItem(at: dumpsRoot)
             return baseline
         } catch {
             await guest.shutdown()
@@ -111,17 +133,18 @@ public struct SimulatedBaselineRecorder: Sendable {
     private func measure(
         in guest: GuestMachine,
         package: URL,
+        guestRoot: String,
         guestPackage: String,
         scratch: String,
         valgrindSource: String,
         valgrindArchive: String,
+        guestFiles: String,
         dumpsRoot: URL,
-        filters: [Regex<AnyRegexOutput>],
-        skips: [Regex<AnyRegexOutput>]
+        guestDumpsRoot: String
     ) async throws -> BenchmarkBaseline {
         let proxy = GuestMachine.proxyEnvironment
-        try await guest.check(["/bin/bash", "/harness/files/provision.sh", valgrindSource, valgrindArchive, "/harness/files"], environment: proxy)
-        try await guest.check(["/bin/bash", "/harness/files/stage.sh", "/source", "/work"])
+        try await guest.check(["/bin/bash", "\(guestFiles)/provision.sh", valgrindSource, valgrindArchive, guestFiles], environment: proxy)
+        try await guest.check(["/bin/bash", "\(guestFiles)/stage.sh", "/source", guestRoot])
 
         let manifest = try await guest.output(["swift", "package", "dump-package", "--package-path", guestPackage])
         let available = try Self.benchmarkTargets(inManifest: manifest)
@@ -129,26 +152,53 @@ public struct SimulatedBaselineRecorder: Sendable {
         guard !selected.isEmpty else { throw NoBenchmarkTargets(available: available) }
 
         let build = ["swift", "build", "-c", "release", "--package-path", guestPackage, "--scratch-path", scratch]
-        for target in selected {
-            FileHandle.standardError.write(Data("Building \(target)\n".utf8))
-            try await guest.check(build + ["--product", target], environment: proxy)
+        if selected == available {
+            FileHandle.standardError.write(Data("Building \(selected.joined(separator: ", "))\n".utf8))
+            try await guest.check(build, environment: proxy)
+        } else {
+            for target in selected {
+                FileHandle.standardError.write(Data("Building \(target)\n".utf8))
+                try await guest.check(build + ["--product", target], environment: proxy)
+            }
         }
         let binPath = String(decoding: try await guest.output(build + ["--show-bin-path"]), as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let kernelVersion = String(decoding: try await guest.output(["uname", "-r"]), as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        var results: [BenchmarkIdentifier: [BenchmarkResult]] = [:]
-        for target in selected {
-            let measured = try await measureTarget(
-                target,
+        let filters = try self.filters.map { try Regex($0) }
+        let skips = try self.skips.map { try Regex($0) }
+        @Sendable func process(_ target: String, dumps: String) -> BenchmarkProcess {
+            BenchmarkProcess(
+                target: target,
                 executable: "\(binPath)/\(target)",
-                in: guest,
-                dumps: dumpsRoot.appending(path: target),
-                filters: filters,
-                skips: skips
+                guest: guest,
+                script: "\(guestFiles)/run-benchmarks.sh",
+                iterations: iterations,
+                dumps: dumpsRoot.appending(path: dumps),
+                guestDumps: "\(guestDumpsRoot)/\(dumps)"
             )
-            results.merge(measured) { first, _ in first }
+        }
+
+        // Each target's benchmarks are listed once, then each benchmark is measured in a process of
+        // its own, so its counts never depend on which benchmarks ran before it or were filtered out.
+        let listed = try await Self.concurrently(selected, limit: jobs) { target in
+            try await process(target, dumps: "\(target)/list").list()
+        }.map { benchmarks in
+            benchmarks.filter { benchmark in
+                (filters.isEmpty || filters.contains { benchmark.name.firstMatch(of: $0) != nil })
+                    && !skips.contains { benchmark.name.firstMatch(of: $0) != nil }
+            }
+        }
+        let work = zip(selected, listed).flatMap { target, benchmarks in
+            benchmarks.enumerated().map { index, benchmark in (target: target, index: index, benchmark: benchmark) }
+        }
+        let measured = try await Self.concurrently(work, limit: jobs) { unit in
+            try await process(unit.target, dumps: "\(unit.target)/\(unit.index)").measure(unit.benchmark)
+        }
+        var results: [BenchmarkIdentifier: [BenchmarkResult]] = [:]
+        for (unit, benchmarkResults) in zip(work, measured) {
+            results[BenchmarkIdentifier(target: unit.target, name: unit.benchmark.name)] = benchmarkResults
         }
 
         let baseline = BenchmarkBaseline(
@@ -171,81 +221,39 @@ public struct SimulatedBaselineRecorder: Sendable {
         return baseline
     }
 
-    private func measureTarget(
-        _ target: String,
-        executable: String,
-        in guest: GuestMachine,
-        dumps: URL,
-        filters: [Regex<AnyRegexOutput>],
-        skips: [Regex<AnyRegexOutput>]
-    ) async throws -> [BenchmarkIdentifier: [BenchmarkResult]] {
-        let (requests, requestContinuation) = AsyncStream.makeStream(of: Data.self)
-        let (replies, replyContinuation) = AsyncStream.makeStream(of: Data.self)
-        let guestDumps = "/harness/dumps/\(target)"
-        async let exitCode = guest.run(
-            ["/bin/bash", "/harness/files/run-benchmarks.sh", executable, guestDumps],
-            standardInput: StreamReader(source: requests),
-            standardOutput: StreamWriter(continuation: replyContinuation)
-        )
-        var channel = BenchmarkChannel(input: requestContinuation, output: replies)
-        var results: [BenchmarkIdentifier: [BenchmarkResult]] = [:]
-        do {
-            channel.send(.list)
-            var benchmarks: [Benchmark] = []
-            listing: while true {
-                switch try await channel.receive() {
-                case let .list(benchmark): benchmarks.append(benchmark)
-                case .end: break listing
-                case let .error(description): throw BenchmarkFailed(target: target, benchmark: nil, description: description)
-                default: continue
-                }
+    /// The results of `body` on each element, in order, running at most `limit` at once.
+    private static func concurrently<Element: Sendable, Result: Sendable>(
+        _ elements: [Element],
+        limit: Int,
+        _ body: @escaping @Sendable (Element) async throws -> Result
+    ) async throws -> [Result] {
+        try await withThrowingTaskGroup(of: (Int, Result).self) { group in
+            var next = 0
+            func startNext() {
+                guard next < elements.count else { return }
+                let index = next
+                let element = elements[index]
+                next += 1
+                group.addTask { (index, try await body(element)) }
             }
-            let chosen = benchmarks.filter { benchmark in
-                (filters.isEmpty || filters.contains { benchmark.name.firstMatch(of: $0) != nil })
-                    && !skips.contains { benchmark.name.firstMatch(of: $0) != nil }
+            for _ in 0 ..< max(1, limit) { startNext() }
+            var results = [Result?](repeating: nil, count: elements.count)
+            while let (index, result) = try await group.next() {
+                results[index] = result
+                startNext()
             }
-            var consumed = 0
-            for benchmark in chosen {
-                FileHandle.standardError.write(Data("Measuring \(target): \(benchmark.name)\n".utf8))
-                channel.send(.run(benchmark: benchmark.measuring([.instructions])))
-                running: while true {
-                    switch try await channel.receive() {
-                    case .end: break running
-                    case let .error(description): throw BenchmarkFailed(target: target, benchmark: benchmark.name, description: description)
-                    default: continue
-                    }
-                }
-                let (dumpsRead, iterations, overhead) = try Self.readDumps(in: dumps, after: consumed)
-                consumed = dumpsRead
-                let identifier = BenchmarkIdentifier(target: target, name: benchmark.name)
-                results[identifier] = SimulatedMetric.allCases.map { metric in
-                    BenchmarkResult(metric: metric, iterations: iterations, overhead: overhead, warmupIterations: benchmark.warmupIterations)
-                }
-                Self.report(identifier, iterations: iterations, overhead: overhead, results: results[identifier] ?? [])
-            }
-            channel.send(.end)
-            channel.finish()
-        } catch {
-            channel.finish()
-            _ = try? await exitCode
-            throw error
+            return results.map { $0! }
         }
-        let code = try await exitCode
-        guard code == 0 else {
-            throw BenchmarkFailed(target: target, benchmark: nil, description: "The executable exited with code \(code); see \(dumps.appending(path: "valgrind.log").path)")
-        }
-        return results
     }
 
-    /// Reads the dumps numbered after `consumed`, split into measured iterations and calibration
-    /// windows, and deletes them.
-    private static func readDumps(in directory: URL, after consumed: Int) throws -> (Int, [CallgrindDump], [CallgrindDump]) {
+    /// Reads a process's dumps in the order Callgrind wrote them, split into measured iterations and
+    /// calibration windows, and deletes them.
+    static func readDumps(in directory: URL) throws -> (iterations: [CallgrindDump], overhead: [CallgrindDump]) {
         let numbered = try FileManager.default.contentsOfDirectory(atPath: directory.path)
             .compactMap { name -> (Int, String)? in
                 guard name.hasPrefix("callgrind.out."), let number = Int(name.dropFirst("callgrind.out.".count)) else { return nil }
                 return (number, name)
             }
-            .filter { $0.0 > consumed }
             .sorted { $0.0 < $1.0 }
         var iterations: [CallgrindDump] = []
         var overhead: [CallgrindDump] = []
@@ -260,16 +268,17 @@ public struct SimulatedBaselineRecorder: Sendable {
             }
             try? FileManager.default.removeItem(at: file)
         }
-        return (numbered.last?.0 ?? consumed, iterations, overhead)
+        return (iterations, overhead)
     }
 
-    private static func report(_ identifier: BenchmarkIdentifier, iterations: [CallgrindDump], overhead: [CallgrindDump], results: [BenchmarkResult]) {
+    static func report(_ identifier: BenchmarkIdentifier, iterations: [CallgrindDump], overhead: [CallgrindDump], elapsed: Duration, results: [BenchmarkResult]) {
         let values = zip(SimulatedMetric.allCases, results).map { metric, result in
             "\(metric.benchmarkMetric.name) \(result.statistics.valueAtPercentile(50))"
         }
         let overheadInstructions = overhead.map { SimulatedMetric.instructions.value(in: $0) }.sorted()
         let windowCost = overheadInstructions.isEmpty ? 0 : overheadInstructions[(overheadInstructions.count - 1) / 2]
-        print("\(identifier.target): \(identifier.name) (\(iterations.count) iterations, p50, less \(windowCost) instructions of measuring) — \(values.joined(separator: ", "))")
+        // Unbuffered, so progress shows while a long run continues.
+        FileHandle.standardOutput.write(Data(("\(identifier.target): \(identifier.name) (\(iterations.count) iterations in \(elapsed.formatted(.units(allowed: [.minutes, .seconds], width: .narrow))), p50, less \(windowCost) instructions of measuring) — \(values.joined(separator: ", "))" + "\n").utf8))
     }
 
     /// The benchmark targets in a `swift package dump-package` manifest: executable targets that
@@ -337,13 +346,31 @@ public struct SimulatedBaselineRecorder: Sendable {
         return kernel
     }
 
-    /// Copies the scripts and sources the guest runs onto the shared volume.
-    private static func installGuestFiles(into directory: URL) throws {
+    /// Copies the scripts and sources the guest runs onto the shared volume, into a directory
+    /// named by their digest, and returns it.
+    ///
+    /// A run never changes files another run's guest may be reading: different contents get a
+    /// different directory, and the same contents are installed once, by an atomic rename.
+    private static func installGuestFiles(in shared: URL) throws -> URL {
         guard let resources = Bundle.module.url(forResource: "Guest", withExtension: nil) else {
             throw CocoaError(.fileNoSuchFile)
         }
-        try? FileManager.default.removeItem(at: directory)
-        try FileManager.default.copyItem(at: resources, to: directory)
+        let names = try FileManager.default.contentsOfDirectory(atPath: resources.path).sorted()
+        var contents = Data()
+        for name in names {
+            contents += Data(name.utf8) + [0] + (try Data(contentsOf: resources.appending(path: name))) + [0]
+        }
+        let directory = shared.appending(path: "files-\(digest(contents).prefix(16))")
+        guard !FileManager.default.fileExists(atPath: directory.path) else { return directory }
+        let staging = shared.appending(path: "files-staging-\(UUID().uuidString)")
+        try FileManager.default.copyItem(at: resources, to: staging)
+        do {
+            try FileManager.default.moveItem(at: staging, to: directory)
+        } catch {
+            try? FileManager.default.removeItem(at: staging)
+            guard FileManager.default.fileExists(atPath: directory.path) else { throw error }
+        }
+        return directory
     }
 
     private static func digest(_ data: Data) -> String {

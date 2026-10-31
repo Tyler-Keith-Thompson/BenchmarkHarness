@@ -53,6 +53,20 @@ run, as they do for `swift package benchmark`. The first run downloads a Linux k
 image and Valgrind, and builds Valgrind; later runs reuse the cache in
 `~/Library/Caches/BenchmarkHarness`.
 
+Simulation is slow: a measured iteration runs roughly fifty times slower than natively. The tool
+keeps that cost to what is measured:
+
+- Each benchmark measures exactly three iterations (`--iterations`), or fewer when its own
+  `maxIterations` is lower, whatever its time limit and however busy the machine is. Its own
+  warmup iterations run first.
+- Callgrind instruments each benchmark only from the start of its measurement to its last
+  iteration, so registration, setup and warmup run several times faster.
+- Each benchmark runs in a process of its own, so its counts don't depend on which benchmarks ran
+  before it or were filtered out, and benchmarks are measured side by side (`--jobs`, by default
+  the virtual machine's `--cpus`), since one Callgrind process uses one processor.
+
+Several runs, from different packages or checkouts, can run at once.
+
 The virtual machine has no network interface. Package resolution inside it goes through an HTTPS
 `CONNECT` proxy that listens on a Unix socket readable only by the current user and admits port
 443 alone.
@@ -101,6 +115,10 @@ iteration to the counter read after it, less the median cost of an empty window.
 benchmark still measures a few hundred instructions, ordo-one's own per-iteration bookkeeping,
 which is the same in every run and so cancels out of a comparison.
 
+The value recorded is the median over the measured iterations. The simulated caches and branch
+predictor start cold at the first measured iteration and stay warm after it, so with three
+iterations the median is a warm one.
+
 ## Development
 
 Bazel is the development build; SwiftPM is the published package. Both are generated from
@@ -113,7 +131,8 @@ Bazel is the development build; SwiftPM is the published package. Both are gener
 | `just modules` | Regenerate `Package.swift` and every `BUILD.bazel` |
 | `just docs` | The DocC site into `.build/docs` |
 | `just bench` | The benchmarks (`Benchmarks/README.md`) |
-| `just bench-simulated` | The benchmarks' simulated counts, as the `main` baseline |
+| `just bench-simulated` | The benchmarks' simulated counts, as the `simulated` baseline |
+| `just bench-simulated-compare` | Simulated counts now, compared against `simulated` |
 | `just harness-test` | The host tool's tests |
 | `just generate` | An Xcode project from the Bazel graph |
 

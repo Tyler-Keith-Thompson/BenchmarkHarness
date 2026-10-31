@@ -46,10 +46,22 @@ struct Update: AsyncParsableCommand {
     var cpus: Int = 4
 
     @Option(help: "The virtual machine's memory, in GiB.")
-    var memory: Int = 8
+    var memory: Int = 16
+
+    @Option(help: "Benchmark targets measured at once (default: --cpus); the counts don't depend on load.")
+    var jobs: Int?
+
+    @Option(help: "Measured iterations per benchmark (fewer if its own maxIterations is lower), in place of its wall-clock limit.")
+    var iterations: Int = 3
 
     @Option(help: "Where downloads, images and build products are cached.")
     var cachePath: String = SimulatedBaselineRecorder.defaultCachePath.path
+
+    func validate() throws {
+        guard cpus > 0 else { throw ValidationError("--cpus must be at least 1.") }
+        guard (jobs ?? 1) > 0 else { throw ValidationError("--jobs must be at least 1.") }
+        guard iterations > 0 else { throw ValidationError("--iterations must be at least 1.") }
+    }
 
     func run() async throws {
         var recorder = SimulatedBaselineRecorder(
@@ -62,6 +74,8 @@ struct Update: AsyncParsableCommand {
         recorder.skips = skips
         recorder.cpus = cpus
         recorder.memoryGiB = memory
+        recorder.iterations = iterations
+        recorder.jobs = jobs ?? cpus
         let baseline = try await recorder.record()
         print("Wrote baseline '\(baseline.baselineName)' for \(baseline.results.count) benchmarks")
     }

@@ -11,11 +11,12 @@ Requires `brew install jemalloc`.
 | `just bench` | Run every benchmark (`--target X` for one) |
 | `just bench-baseline` | Save the current results as the `main` baseline |
 | `just bench-compare` | Compare the current results against `main` |
-| `just bench-simulated [name]` | Record simulated counts as a baseline (default `main`) in a Linux virtual machine |
+| `just bench-simulated [--target X]` | Record simulated counts, in a Linux virtual machine, as the `simulated` baseline |
+| `just bench-simulated-compare [--target X]` | Record simulated counts as `simulated-current` and compare them against `simulated` |
 
 Each module's benchmarks live in `Benchmarks/<Module>Benchmarks/` and start with a `BASELINE`
-entry: the hand-written form the library must keep pace with. Only the `main` baseline is
-committed; other names are local before/after comparisons.
+entry: the hand-written form the library must keep pace with. Only the `main` and `simulated`
+baselines are committed; other names are local before/after comparisons.
 
 `just bench-simulated` counts instructions, cache misses and mispredicted branches under Callgrind
 instead of timing, so its baselines don't move when the machine is busy. Compare against one as
