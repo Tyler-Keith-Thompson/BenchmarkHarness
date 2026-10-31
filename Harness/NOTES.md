@@ -88,3 +88,14 @@ kernel 7.0.11, aarch64) and compared with the virtual machine (kernel 6.12.28) o
 Docker on macOS shares host directories case-insensitively, where Valgrind's documentation install
 fails (`FAQ.html` against `faq.html`); provisioning installs into a staging root and the cache in
 such tests belongs on a Linux volume.
+
+## SwiftPM's cached build plan and added files
+
+The scratch directory persists between runs, and staging keeps the checkout's modification times
+so builds stay incremental. GrafluentCollections hit a build that reused a cached
+`description.json` from before `Treap.swift` was added, and failed with `cannot find type 'Treap'
+in scope` though the staged copy had the file. A one-file addition in this repository didn't
+reproduce it, so the trigger is not pinned down. `stage.sh` now records the staged file names per
+scratch directory and deletes SwiftPM's cached plans (`*.yaml`, `description.json`) when they
+change, so a build after an added, removed or renamed file always plans again; compiled products
+are kept.

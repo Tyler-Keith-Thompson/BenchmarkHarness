@@ -198,7 +198,7 @@ public struct SimulatedBaselineRecorder: Sendable {
             ["/bin/bash", "\(machineFiles)/provision.sh", "\(layout.shared)/downloads/\(valgrindSource.lastPathComponent)", valgrindArchive, machineFiles, layout.prefix],
             environment: network
         )
-        try await machine.check(["/bin/bash", "\(machineFiles)/stage.sh", layout.source, stagedRoot])
+        try await machine.check(["/bin/bash", "\(machineFiles)/stage.sh", layout.source, stagedRoot, scratch])
 
         let manifest = try await machine.output(["swift", "package", "dump-package", "--package-path", stagedPackage])
         let available = try Self.benchmarkTargets(inManifest: manifest)
