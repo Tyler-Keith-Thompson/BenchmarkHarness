@@ -44,6 +44,8 @@ let package = Package(
             name: "HarnessHostTests",
             dependencies: [
                 "HarnessHost",
+                .product(name: "BenchmarkBaselines", package: "BenchmarkHarness"),
+                .product(name: "BenchmarkCommands", package: "BenchmarkHarness"),
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
             ]

@@ -20,6 +20,8 @@ struct BenchmarkProcess: Sendable {
     let dumps: URL
     /// The same directory, as the guest sees it.
     let guestDumps: String
+    /// Whether the executable runs without Valgrind, for ``count(_:metrics:)``.
+    var native = false
 
     /// The executable's benchmarks.
     func list() async throws -> [Benchmark] {
@@ -65,6 +67,26 @@ struct BenchmarkProcess: Sendable {
         }
     }
 
+    /// The results ordo-one/benchmark's own collectors report for `metrics` of `benchmark`, measured
+    /// in this process alone; for a process with ``native`` set.
+    ///
+    /// The instruction counter is requested too, though its counts are dropped: its reads are the
+    /// measurement windows the shim counts iterations by.
+    func count(_ benchmark: Benchmark, metrics: [BenchmarkMetric]) async throws -> [BenchmarkResult] {
+        try await session { channel in
+            channel.send(.run(benchmark: benchmark.measuring(metrics + [.instructions])))
+            var results: [BenchmarkResult] = []
+            while true {
+                switch try await channel.receive() {
+                case let .result(_, reported): results += reported.filter { metrics.contains($0.metric) }
+                case .end: return results
+                case let .error(description): throw BenchmarkFailed(target: target, benchmark: benchmark.name, description: description)
+                default: continue
+                }
+            }
+        }
+    }
+
     /// Starts the executable, runs `body` against its protocol channel, then ends it.
     ///
     /// - Throws: ``BenchmarkFailed`` when the executable exits with a non-zero code, and whatever
@@ -75,7 +97,7 @@ struct BenchmarkProcess: Sendable {
         let (requests, requestContinuation) = AsyncStream.makeStream(of: Data.self)
         let (replies, replyContinuation) = AsyncStream.makeStream(of: Data.self)
         async let exitCode = guest.run(
-            ["/bin/bash", script, executable, guestDumps, String(iterations)],
+            ["/bin/bash", script, executable, guestDumps, String(iterations), native ? "native" : "callgrind"],
             standardInput: StreamReader(source: requests),
             standardOutput: StreamWriter(continuation: replyContinuation)
         )

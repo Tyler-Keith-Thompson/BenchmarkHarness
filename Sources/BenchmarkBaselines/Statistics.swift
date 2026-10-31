@@ -4,9 +4,11 @@ import Histogram
 /// The measurements of one metric over a benchmark's iterations, as ordo-one/benchmark stores them.
 ///
 /// Values are recorded in an HDR histogram with three significant digits, the same configuration
-/// ordo-one/benchmark uses, and encode with the same keys as its `Statistics`.
+/// ordo-one/benchmark uses, and encode with the same keys as its `Statistics`. Statistics
+/// ordo-one/benchmark encoded decode to the histogram and polarity they hold; its cached
+/// percentiles and display units are derived again.
 @frozen
-public struct Statistics: Equatable, Sendable, Encodable {
+public struct Statistics: Equatable, Sendable, Codable {
     /// The display units ordo-one/benchmark derives from the magnitude of a mean.
     @frozen
     public enum Units: Int, Hashable, Sendable, Codable, CaseIterable {
@@ -92,6 +94,12 @@ public struct Statistics: Equatable, Sendable, Encodable {
         case prefersLarger
         case timeUnits
         case histogram
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.histogram = try container.decode(Histogram<UInt>.self, forKey: .histogram)
+        self.prefersLarger = try container.decode(Bool.self, forKey: .prefersLarger)
     }
 
     public func encode(to encoder: any Encoder) throws {

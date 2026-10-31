@@ -27,6 +27,43 @@ struct BenchmarkCommandTests {
         #expect(benchmark.warmupIterations == expectedWarmup)
     }
 
+    @Test("A listed benchmark's configured metrics decode, as ordo-one/benchmark 1.38.0 lists them", .tags(.fixture))
+    func listedMetrics() throws {
+        let json = Data(#"""
+            {"list": {"benchmark": {"target": "", "name": "Sum1000", "configuration": {"timeUnits": "automatic", "scalingFactor": 1, "maxDuration": [0, 1000000000000000000], "maxIterations": 20, "tags": {}, "units": [], "metrics": [{"wallClock": {}}, {"instructions": {}}], "warmupIterations": 1}}}}
+            """#.utf8)
+        guard case let .list(benchmark) = try BenchmarkCommandReply(json: json) else {
+            Issue.record("Expected a list reply")
+            return
+        }
+        let expected: [BenchmarkMetric] = [.wallClock, .instructions]
+        #expect(benchmark.metrics == expected)
+    }
+
+    @Test("A benchmark without configured metrics has none")
+    func noMetrics() throws {
+        let benchmark = try Benchmark(json: Data(#"{"name": "A", "configuration": {}}"#.utf8))
+        #expect(benchmark.metrics.isEmpty)
+    }
+
+    @Test("A result reply decodes each result it carries")
+    func resultReply() throws {
+        let results = [
+            BenchmarkResult(metric: .mallocCountTotal, measurements: [12, 12, 12], warmupIterations: 1),
+            BenchmarkResult(metric: .custom("Graph bytes"), measurements: [4096], warmupIterations: 1),
+        ]
+        let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(results))
+        let reply: [String: Any] = ["result": ["benchmark": ["name": "Sort", "configuration": [String: Any]()], "results": encoded]]
+        let decoded = try BenchmarkCommandReply(json: JSONSerialization.data(withJSONObject: reply))
+        guard case let .result(benchmark, decodedResults) = decoded else {
+            Issue.record("Expected a result reply, got \(decoded)")
+            return
+        }
+        let expectedName = "Sort"
+        #expect(benchmark.name == expectedName)
+        #expect(decodedResults == results)
+    }
+
     @Test("measuring(_:) replaces the metrics and keeps every other setting")
     func measuringReplacesMetrics() throws {
         let original = try Benchmark(json: Data(#"""
@@ -78,7 +115,7 @@ struct BenchmarkCommandTests {
         let expected: [(String, BenchmarkCommandReply)] = try [
             (#"{"list":{"benchmark":\#(benchmark)}}"#, .list(benchmark: Benchmark(json: Data(benchmark.utf8)))),
             (#"{"ready":{}}"#, .ready),
-            (#"{"result":{"benchmark":\#(benchmark),"results":[]}}"#, .result(benchmark: Benchmark(json: Data(benchmark.utf8)))),
+            (#"{"result":{"benchmark":\#(benchmark),"results":[]}}"#, .result(benchmark: Benchmark(json: Data(benchmark.utf8)), results: [])),
             (#"{"allocationStacks":{"benchmark":\#(benchmark),"report":{}}}"#, .allocationStacks(benchmark: Benchmark(json: Data(benchmark.utf8)))),
             (#"{"run":{}}"#, .run),
             (#"{"end":{}}"#, .end),
@@ -87,7 +124,7 @@ struct BenchmarkCommandTests {
         for (json, reply) in expected {
             let decoded = try BenchmarkCommandReply(json: Data(json.utf8))
             switch (decoded, reply) {
-            case let (.list(a), .list(b)), let (.result(a), .result(b)), let (.allocationStacks(a), .allocationStacks(b)):
+            case let (.list(a), .list(b)), let (.result(a, _), .result(b, _)), let (.allocationStacks(a), .allocationStacks(b)):
                 #expect(a.name == b.name, "\(json)")
             default:
                 #expect(decoded == reply, "\(json)")
@@ -100,6 +137,9 @@ struct BenchmarkCommandTests {
         let replies = [
             "", "[]", "{}", #"{"list":{}}"#, #"{"unknown":{}}"#, #"{"end":{},"run":{}}"#, #"{"error":{}}"#,
             #"{"list":{"benchmark":{"configuration":{}}}}"#, #"{"list":{"benchmark":{"name":"A"}}}"#,
+            #"{"result":{"benchmark":{"name":"A","configuration":{}}}}"#,
+            #"{"result":{"benchmark":{"name":"A","configuration":{}},"results":[{"metric":{"instructions":{}}}]}}"#,
+            #"{"list":{"benchmark":{"name":"A","configuration":{"metrics":[{"unknownMetric":{}}]}}}}"#,
         ]
         for json in replies {
             #expect(throws: MalformedBenchmarkCommand(), "\(json)") {

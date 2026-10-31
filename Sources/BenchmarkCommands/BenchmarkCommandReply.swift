@@ -1,17 +1,18 @@
+import BenchmarkBaselines
 import Foundation
 
 /// A reply a benchmark executable sends ordo-one/benchmark's tool.
 ///
-/// Replies carrying measurements keep only the benchmark they describe; the measurements of
-/// ordo-one/benchmark's own collectors are not decoded.
+/// A ``result(benchmark:results:)`` reply decodes the results of ordo-one/benchmark's own
+/// collectors; an ``allocationStacks(benchmark:)`` reply keeps only its benchmark.
 @frozen
-public enum BenchmarkCommandReply: Hashable, Sendable {
+public enum BenchmarkCommandReply: Equatable, Sendable {
     /// One benchmark, in reply to ``BenchmarkCommandRequest/list``.
     case list(benchmark: Benchmark)
     /// The executable is ready.
     case ready
-    /// The results of running `benchmark`.
-    case result(benchmark: Benchmark)
+    /// The results of running `benchmark`, one per metric it measured.
+    case result(benchmark: Benchmark, results: [BenchmarkResult])
     /// The allocation stacks recorded while running `benchmark`.
     case allocationStacks(benchmark: Benchmark)
     /// The executable started running a benchmark.
@@ -43,7 +44,14 @@ public enum BenchmarkCommandReply: Hashable, Sendable {
         switch key {
         case "list": self = try .list(benchmark: benchmark())
         case "ready": self = .ready
-        case "result": self = try .result(benchmark: benchmark())
+        case "result":
+            guard let results = payload["results"],
+                  let data = try? JSONSerialization.data(withJSONObject: results),
+                  let decoded = try? JSONDecoder().decode([BenchmarkResult].self, from: data)
+            else {
+                throw MalformedBenchmarkCommand()
+            }
+            self = try .result(benchmark: benchmark(), results: decoded)
         case "allocationStacks": self = try .allocationStacks(benchmark: benchmark())
         case "run": self = .run
         case "end": self = .end

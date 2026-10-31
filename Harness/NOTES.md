@@ -53,3 +53,18 @@ Benchmarks that share a process leave allocator and runtime state for the ones a
 benchmarks before it. Each benchmark is therefore measured in a process of its own, so a filtered
 run counts what a full run does, and one target's benchmarks run side by side. Each process
 registers every benchmark of its target again, uninstrumented.
+
+## Allocation and reference counts come from a second, native run
+
+ordo-one/benchmark counts allocations through its malloc interposer and, on Linux with Swift 6.3,
+retains and releases through `libSwiftRuntimeInterposerSwift.so`, which its plugin puts in
+`LD_PRELOAD` from beside the executable. Without the preload the runtime interposer counts
+nothing, the `- 1` ordo-one subtracts from each retain and release delta makes it negative, and
+`Statistics.add` drops negative measurements, so the result goes missing rather than reading zero.
+`run-benchmarks.sh` preloads both in its native mode, as the plugin does.
+
+Requesting these metrics also installs their hooks, which add instructions to every window, so the
+simulated pass requests only the simulated metrics and a second process, without Valgrind and with
+the same shim and iteration count, measures the counted ones. On ECS's `spawn three components`
+the simulated counts are unchanged (1,695,460,606 instructions) and the native pass reports 302
+allocations, 4 retains and 357 releases per measurement.

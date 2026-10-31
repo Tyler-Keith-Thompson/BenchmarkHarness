@@ -13,6 +13,8 @@ public struct Benchmark: Hashable, Sendable {
     public let name: String
     /// The iterations the benchmark runs before measuring.
     public let warmupIterations: Int
+    /// The metrics the benchmark is configured to measure.
+    public let metrics: [BenchmarkMetric]
     /// The benchmark's JSON, as ordo-one/benchmark encodes its `Benchmark` class.
     public let json: Data
 
@@ -20,13 +22,14 @@ public struct Benchmark: Hashable, Sendable {
     ///
     /// - Parameter json: An ordo-one/benchmark `Benchmark` encoded as JSON.
     /// - Throws: ``MalformedBenchmarkCommand`` when `json` is not an object with a string `name`
-    ///   and a `configuration` object.
+    ///   and a `configuration` object, or its configuration's `metrics` are not metrics.
     public init(json: Data) throws(MalformedBenchmarkCommand) {
         guard let header = try? JSONDecoder().decode(Header.self, from: json) else {
             throw MalformedBenchmarkCommand()
         }
         self.name = header.name
         self.warmupIterations = header.configuration.warmupIterations ?? 0
+        self.metrics = header.configuration.metrics ?? []
         self.json = json
     }
 
@@ -57,6 +60,7 @@ public struct Benchmark: Hashable, Sendable {
     private struct Header: Decodable {
         struct Configuration: Decodable {
             let warmupIterations: Int?
+            let metrics: [BenchmarkMetric]?
         }
 
         let name: String

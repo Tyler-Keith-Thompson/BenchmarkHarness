@@ -194,7 +194,16 @@ public struct SimulatedBaselineRecorder: Sendable {
             benchmarks.enumerated().map { index, benchmark in (target: target, index: index, benchmark: benchmark) }
         }
         let measured = try await Self.concurrently(work, limit: jobs) { unit in
-            try await process(unit.target, dumps: "\(unit.target)/\(unit.index)").measure(unit.benchmark)
+            let simulated = try await process(unit.target, dumps: "\(unit.target)/\(unit.index)").measure(unit.benchmark)
+            let counted = Self.countedMetrics(of: unit.benchmark)
+                .filter { metric in !simulated.contains { $0.metric == metric } }
+            guard !counted.isEmpty else { return simulated }
+            var native = process(unit.target, dumps: "\(unit.target)/\(unit.index)-native")
+            native.native = true
+            let countedResults = try await native.count(unit.benchmark, metrics: counted)
+            let values = countedResults.map { "\($0.metric.name) \($0.statistics.valueAtPercentile(50))" }
+            FileHandle.standardOutput.write(Data("\(unit.target): \(unit.benchmark.name) (counted, p50) — \(values.joined(separator: ", "))\n".utf8))
+            return simulated + countedResults
         }
         var results: [BenchmarkIdentifier: [BenchmarkResult]] = [:]
         for (unit, benchmarkResults) in zip(work, measured) {
@@ -219,6 +228,23 @@ public struct SimulatedBaselineRecorder: Sendable {
             try encoder.encode(perTarget).write(to: file, options: .atomic)
         }
         return baseline
+    }
+
+    /// The metrics `benchmark` is configured with that ordo-one/benchmark counts itself and that
+    /// don't depend on time: allocation, free and leak counts, Swift object and reference counts,
+    /// and every custom metric. They are measured without Valgrind and kept beside the simulated
+    /// metrics.
+    package static func countedMetrics(of benchmark: Benchmark) -> [BenchmarkMetric] {
+        benchmark.metrics.filter { metric in
+            switch metric {
+            case .mallocCountSmall, .mallocCountLarge, .mallocCountTotal, .freeCountTotal, .mallocBytesCount,
+                 .mallocFreeDelta, .memoryLeaked, .memoryLeakedBytes, .objectAllocCount, .retainCount,
+                 .releaseCount, .retainReleaseDelta, .custom:
+                true
+            default:
+                false
+            }
+        }
     }
 
     /// The results of `body` on each element, in order, running at most `limit` at once.
@@ -272,9 +298,7 @@ public struct SimulatedBaselineRecorder: Sendable {
     }
 
     static func report(_ identifier: BenchmarkIdentifier, iterations: [CallgrindDump], overhead: [CallgrindDump], elapsed: Duration, results: [BenchmarkResult]) {
-        let values = zip(SimulatedMetric.allCases, results).map { metric, result in
-            "\(metric.benchmarkMetric.name) \(result.statistics.valueAtPercentile(50))"
-        }
+        let values = results.map { "\($0.metric.name) \($0.statistics.valueAtPercentile(50))" }
         let overheadInstructions = overhead.map { SimulatedMetric.instructions.value(in: $0) }.sorted()
         let windowCost = overheadInstructions.isEmpty ? 0 : overheadInstructions[(overheadInstructions.count - 1) / 2]
         // Unbuffered, so progress shows while a long run continues.
@@ -384,6 +408,7 @@ extension BenchmarkMetric {
         switch self {
         case .instructions: "Instructions"
         case let .custom(name, _, _): name
+        default: String(describing: self)
         }
     }
 }

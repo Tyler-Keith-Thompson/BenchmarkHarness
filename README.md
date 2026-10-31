@@ -119,6 +119,13 @@ The value recorded is the median over the measured iterations. The simulated cac
 predictor start cold at the first measured iteration and stay warm after it, so with three
 iterations the median is a warm one.
 
+A benchmark's own metrics that don't depend on time are recorded beside these: allocation, free
+and leak counts (`mallocCountTotal`, `memoryLeaked`, …), Swift object, retain and release counts
+(`objectAllocCount`, `retainCount`, …) and custom metrics. They are measured in a second run of
+the benchmark, without Valgrind, over the same number of iterations, so `baseline compare` and
+`check` see them as `swift package benchmark` records them. Time, memory and system-call metrics
+are left out.
+
 ## Development
 
 Bazel is the development build; SwiftPM is the published package. Both are generated from
