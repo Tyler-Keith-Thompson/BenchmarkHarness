@@ -1,0 +1,23 @@
+# Agent worktrees are checkouts of this same repo, so `//...` would otherwise expand into every one.
+.claude
+
+# SwiftPM build directories can contain BUILD files, which Bazel would otherwise try to load.
+.build
+.swiftpm
+swift/.build
+swift/.swiftpm
+
+# Convenience symlinks.
+bazel-BenchmarkHarness
+bazel-bin
+bazel-out
+bazel-testlogs
+
+# The benchmark package is SwiftPM-only.
+Benchmarks
+
+# The host tool is SwiftPM-only: it needs macOS 26's Containerization framework.
+Harness
+
+# Overlays the bootstrap script copies over the template (server type); not built in place.
+templates

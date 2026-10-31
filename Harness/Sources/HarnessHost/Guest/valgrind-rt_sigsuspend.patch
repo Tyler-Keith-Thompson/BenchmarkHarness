@@ -1,0 +1,21 @@
+--- a/coregrind/m_syswrap/syswrap-linux.c
++++ b/coregrind/m_syswrap/syswrap-linux.c
+@@ -5241,7 +5241,17 @@
+    if (ARG1 != (Addr)NULL) {
+       PRE_MEM_READ( "rt_sigsuspend(mask)", ARG1, sizeof(vki_sigset_t) );
+       if (ML_(safe_to_deref)((vki_sigset_t *) (Addr)ARG1, sizeof(vki_sigset_t))) {
+-         VG_(sigdelset)((vki_sigset_t *) (Addr)ARG1, VG_SIGVGKILL);
++         /* The client's mask may live in read-only memory (libdispatch keeps
++            it in .rodata), so remove VG_SIGVGKILL from a per-thread copy and
++            pass that to the kernel instead of writing to the client's. */
++         static vki_sigset_t* suspend_masks = NULL;
++         if (suspend_masks == NULL)
++            suspend_masks = VG_(malloc)("syswrap.rt_sigsuspend.mask", VG_N_THREADS * sizeof(vki_sigset_t));
++         if (VG_(sigismember)((vki_sigset_t *) (Addr)ARG1, VG_SIGVGKILL)) {
++            suspend_masks[tid] = *(vki_sigset_t *) (Addr)ARG1;
++            VG_(sigdelset)(&suspend_masks[tid], VG_SIGVGKILL);
++            arrghs->arg1 = (UWord)&suspend_masks[tid];
++         }
+          /* We cannot mask VG_SIGVGKILL, as otherwise this thread would not
+             be killable by VG_(nuke_all_threads_except).
+             We thus silently ignore the user request to mask this signal.

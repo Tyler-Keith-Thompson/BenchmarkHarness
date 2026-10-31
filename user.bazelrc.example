@@ -1,0 +1,8 @@
+# Copy to user.bazelrc (gitignored) for a BuildBuddy remote cache and build results. CI writes the
+# same lines from the BUILDBUDDY_API_KEY repository secret (.github/workflows/CI.yml).
+build --bes_results_url=https://app.buildbuddy.io/invocation/
+build --bes_backend=grpcs://remote.buildbuddy.io
+build --remote_cache=grpcs://remote.buildbuddy.io
+common --remote_header=x-buildbuddy-api-key=YOUR_KEY_HERE
+# Compressed (zstd) transfers to and from the cache.
+build --remote_cache_compression

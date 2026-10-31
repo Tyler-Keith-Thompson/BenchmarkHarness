@@ -1,0 +1,32 @@
+# Agent worktrees are checkouts of this same repo.
+.claude/worktrees/
+
+# Bazel
+/bazel-*
+/user.bazelrc
+# Remote cache diagnostics (user.bazelrc may write them).
+/bazel-remote-grpc.log
+/execution_log.binpb.zst
+.cache/
+
+# SwiftPM
+.build/
+.swiftpm/
+# The root package is a library, so its resolution is not committed; swift/Package.resolved
+# pins Bazel's dependencies and is.
+/Package.resolved
+
+# Xcode (generated from the Bazel graph by `just generate`)
+/BenchmarkHarness.xcodeproj/
+xcuserdata/
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+
+# Benchmark baselines: only `main` (just bench-baseline) is shared; other names are local before/after comparisons.
+Benchmarks/.benchmarkBaselines/*/*
+!Benchmarks/.benchmarkBaselines/*/main/
+*.swp
