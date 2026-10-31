@@ -1,14 +1,14 @@
 import BenchmarkBaselines
 import BenchmarkCommands
 import Callgrind
-import CryptoKit
+import Crypto
 import Foundation
 import SimulatedMetrics
 
 /// Records an ordo-one/benchmark baseline of a package's benchmarks from Callgrind's simulated
-/// counts, measured in a Linux guest.
+/// counts, measured on Linux: in a guest booted on macOS, or on the Linux host itself.
 ///
-/// The package's benchmark targets are built in the guest and each benchmark executable is run
+/// The package's benchmark targets are built on that machine and each benchmark executable is run
 /// under Callgrind, driven by ordo-one/benchmark's own protocol, so benchmarks are declared and
 /// configured exactly as for `swift package benchmark`. Each measured iteration is one Callgrind
 /// dump; the result of each ``SimulatedMetric`` is written to the package's `.benchmarkBaselines`
@@ -26,9 +26,9 @@ public struct SimulatedBaselineRecorder: Sendable {
     public var skips: [String] = []
     /// Where downloads, the guest's images, the Valgrind build and build products are kept.
     public var cachePath: URL
-    /// The guest's virtual processors.
+    /// The guest's virtual processors, on macOS.
     public var cpus: Int = 4
-    /// The guest's memory, in gibibytes.
+    /// The guest's memory, in gibibytes, on macOS.
     public var memoryGiB: Int = 16
     /// The iterations of each benchmark that are measured.
     ///
@@ -50,12 +50,17 @@ public struct SimulatedBaselineRecorder: Sendable {
         self.cachePath = cachePath
     }
 
-    /// The default cache: `~/Library/Caches/BenchmarkHarness`.
+    /// The default cache: `BenchmarkHarness` in the user's caches directory, `~/Library/Caches` on
+    /// macOS and `~/.cache` on Linux.
     public static var defaultCachePath: URL {
-        URL.cachesDirectory.appending(path: "BenchmarkHarness")
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: ".cache")
+        return caches.appending(path: "BenchmarkHarness")
     }
 
     /// Measures the benchmarks and writes the baseline, one `results.json` per target.
+    ///
+    /// On macOS the benchmarks run in a Linux guest; on Linux, on the host itself.
     ///
     /// - Returns: The baseline written.
     public func record() async throws -> BenchmarkBaseline {
@@ -65,27 +70,20 @@ public struct SimulatedBaselineRecorder: Sendable {
         _ = try self.skips.map { try Regex($0) }
         let package = packagePath.standardizedFileURL.resolvingSymlinksInPath()
         let sourceRoot = Self.sourceRoot(of: package)
-        let relativePackage = String(package.path.dropFirst(sourceRoot.path.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        // The checkout keeps its directory name in the guest, because SwiftPM names a path
-        // dependency after its directory: `.package(path: "..")` must still be the same package.
-        let guestRoot = "/work/\(sourceRoot.lastPathComponent)"
-        let guestPackage = relativePackage.isEmpty ? guestRoot : "\(guestRoot)/\(relativePackage)"
 
         let shared = cachePath.appending(path: "guest")
         try FileManager.default.createDirectory(at: shared, withIntermediateDirectories: true)
         let files = try Self.installGuestFiles(in: shared)
-        let guestFiles = "/harness/\(files.lastPathComponent)"
         // Each run has its own dumps, so concurrent runs never read each other's.
         let run = "\(ProcessInfo.processInfo.processIdentifier)-\(UUID().uuidString.prefix(8))"
         let dumpsRoot = shared.appending(path: "dumps").appending(path: run)
-        let guestDumpsRoot = "/harness/dumps/\(run)"
-
-        let kernel = try await Self.kernel(in: cachePath)
         let valgrindSource = try await PinnedDownload.valgrindSource.fetch(into: shared.appending(path: "downloads"))
         let patch = try Data(contentsOf: files.appending(path: "valgrind-rt_sigsuspend.patch"))
-        let valgrindArchive = "valgrind-3.28.0-\(Self.digest(patch).prefix(12)).tar"
-        let scratch = "/harness/scratch/\(Self.digest(Data(sourceRoot.path.utf8)).prefix(16))"
+        let valgrindBuild = "valgrind-3.28.0-\(Self.digest(patch).prefix(12))"
 
+        #if os(macOS)
+        let layout = Layout(shared: "/harness", source: "/source", work: "/work", prefix: "/opt")
+        let kernel = try await Self.kernel(in: cachePath)
         let socket = FileManager.default.temporaryDirectory.appending(path: "bh-\(ProcessInfo.processInfo.processIdentifier).sock").path
         let proxy = try await ConnectProxy.start(socketPath: socket)
         let guest: GuestMachine
@@ -96,11 +94,11 @@ public struct SimulatedBaselineRecorder: Sendable {
                 cpus: cpus,
                 memoryInBytes: UInt64(memoryGiB) << 30,
                 shares: [
-                    .init(hostPath: shared, guestPath: "/harness", readOnly: false),
-                    .init(hostPath: sourceRoot, guestPath: "/source", readOnly: true),
+                    .init(hostPath: shared, guestPath: layout.shared, readOnly: false),
+                    .init(hostPath: sourceRoot, guestPath: layout.source, readOnly: true),
                 ],
                 proxySocket: socket,
-                bridge: "\(guestFiles)/proxy-bridge.pl"
+                bridge: "\(layout.shared)/\(files.lastPathComponent)/proxy-bridge.pl"
             )
         } catch {
             await proxy.stop()
@@ -108,75 +106,128 @@ public struct SimulatedBaselineRecorder: Sendable {
         }
         do {
             let baseline = try await measure(
-                in: guest,
+                on: guest,
+                layout: layout,
+                processors: cpus,
+                memoryGiB: memoryGiB,
                 package: package,
-                guestRoot: guestRoot,
-                guestPackage: guestPackage,
-                scratch: scratch,
-                valgrindSource: "/harness/downloads/\(valgrindSource.lastPathComponent)",
-                valgrindArchive: "/harness/\(valgrindArchive)",
-                guestFiles: guestFiles,
-                dumpsRoot: dumpsRoot,
-                guestDumpsRoot: guestDumpsRoot
+                sourceRoot: sourceRoot,
+                files: files,
+                valgrindSource: valgrindSource,
+                valgrindBuild: valgrindBuild,
+                run: run,
+                dumpsRoot: dumpsRoot
             )
             await guest.shutdown()
             await proxy.stop()
-            try? FileManager.default.removeItem(at: dumpsRoot)
             return baseline
         } catch {
             await guest.shutdown()
             await proxy.stop()
             throw error
         }
+        #else
+        // The host's own paths. Valgrind is installed under the cache, once per build of it, and
+        // the checkout is staged by the digest of its path, so its builds stay incremental.
+        let layout = Layout(
+            shared: shared.path,
+            source: sourceRoot.path,
+            work: shared.appending(path: "work/\(Self.digest(Data(sourceRoot.path.utf8)).prefix(16))").path,
+            prefix: shared.appending(path: "host/\(valgrindBuild)").path
+        )
+        return try await measure(
+            on: HostMachine(),
+            layout: layout,
+            processors: ProcessInfo.processInfo.activeProcessorCount,
+            memoryGiB: Int(ProcessInfo.processInfo.physicalMemory >> 30),
+            package: package,
+            sourceRoot: sourceRoot,
+            files: files,
+            valgrindSource: valgrindSource,
+            valgrindBuild: valgrindBuild,
+            run: run,
+            dumpsRoot: dumpsRoot
+        )
+        #endif
     }
 
-    private func measure(
-        in guest: GuestMachine,
-        package: URL,
-        guestRoot: String,
-        guestPackage: String,
-        scratch: String,
-        valgrindSource: String,
-        valgrindArchive: String,
-        guestFiles: String,
-        dumpsRoot: URL,
-        guestDumpsRoot: String
-    ) async throws -> BenchmarkBaseline {
-        let proxy = GuestMachine.proxyEnvironment
-        try await guest.check(["/bin/bash", "\(guestFiles)/provision.sh", valgrindSource, valgrindArchive, guestFiles], environment: proxy)
-        try await guest.check(["/bin/bash", "\(guestFiles)/stage.sh", "/source", guestRoot])
+    /// Where the recorder's directories are, as the machine that measures sees them.
+    private struct Layout {
+        /// The cache's `guest` directory: guest files, downloads, build products and dumps.
+        let shared: String
+        /// The checkout, read only.
+        let source: String
+        /// Where the checkout is staged and built.
+        let work: String
+        /// Where Valgrind and the shim are installed.
+        let prefix: String
+    }
 
-        let manifest = try await guest.output(["swift", "package", "dump-package", "--package-path", guestPackage])
+    private func measure<Runner: Machine>(
+        on machine: Runner,
+        layout: Layout,
+        processors: Int,
+        memoryGiB: Int,
+        package: URL,
+        sourceRoot: URL,
+        files: URL,
+        valgrindSource: URL,
+        valgrindBuild: String,
+        run: String,
+        dumpsRoot: URL
+    ) async throws -> BenchmarkBaseline {
+        let relativePackage = String(package.path.dropFirst(sourceRoot.path.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        // The checkout keeps its directory name when staged, because SwiftPM names a path
+        // dependency after its directory: `.package(path: "..")` must still be the same package.
+        let stagedRoot = "\(layout.work)/\(sourceRoot.lastPathComponent)"
+        let stagedPackage = relativePackage.isEmpty ? stagedRoot : "\(stagedRoot)/\(relativePackage)"
+        let machineFiles = "\(layout.shared)/\(files.lastPathComponent)"
+        // The archive holds an installation under one prefix, so each prefix has its own.
+        let valgrindArchive = "\(layout.shared)/\(valgrindBuild)-\(Self.digest(Data(layout.prefix.utf8)).prefix(8)).tar"
+        let scratch = "\(layout.shared)/scratch/\(Self.digest(Data(sourceRoot.path.utf8)).prefix(16))"
+        let machineDumpsRoot = "\(layout.shared)/dumps/\(run)"
+        let network = machine.networkEnvironment
+
+        try await machine.check(
+            ["/bin/bash", "\(machineFiles)/provision.sh", "\(layout.shared)/downloads/\(valgrindSource.lastPathComponent)", valgrindArchive, machineFiles, layout.prefix],
+            environment: network
+        )
+        try await machine.check(["/bin/bash", "\(machineFiles)/stage.sh", layout.source, stagedRoot])
+
+        let manifest = try await machine.output(["swift", "package", "dump-package", "--package-path", stagedPackage])
         let available = try Self.benchmarkTargets(inManifest: manifest)
         let selected = targets.isEmpty ? available : available.filter(targets.contains)
         guard !selected.isEmpty else { throw NoBenchmarkTargets(available: available) }
 
-        let build = ["swift", "build", "-c", "release", "--package-path", guestPackage, "--scratch-path", scratch]
+        let build = ["swift", "build", "-c", "release", "--package-path", stagedPackage, "--scratch-path", scratch]
         if selected == available {
             FileHandle.standardError.write(Data("Building \(selected.joined(separator: ", "))\n".utf8))
-            try await guest.check(build, environment: proxy)
+            try await machine.check(build, environment: network)
         } else {
             for target in selected {
                 FileHandle.standardError.write(Data("Building \(target)\n".utf8))
-                try await guest.check(build + ["--product", target], environment: proxy)
+                try await machine.check(build + ["--product", target], environment: network)
             }
         }
-        let binPath = String(decoding: try await guest.output(build + ["--show-bin-path"]), as: UTF8.self)
+        let binPath = String(decoding: try await machine.output(build + ["--show-bin-path"]), as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let kernelVersion = String(decoding: try await guest.output(["uname", "-r"]), as: UTF8.self)
+        let kernelVersion = String(decoding: try await machine.output(["uname", "-r"]), as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let architecture = String(decoding: try await machine.output(["uname", "-m"]), as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         let filters = try self.filters.map { try Regex($0) }
         let skips = try self.skips.map { try Regex($0) }
-        @Sendable func process(_ target: String, dumps: String) -> BenchmarkProcess {
+        @Sendable func process(_ target: String, dumps: String) -> BenchmarkProcess<Runner> {
             BenchmarkProcess(
                 target: target,
                 executable: "\(binPath)/\(target)",
-                guest: guest,
-                script: "\(guestFiles)/run-benchmarks.sh",
+                machine: machine,
+                script: "\(machineFiles)/run-benchmarks.sh",
+                prefix: layout.prefix,
                 iterations: iterations,
                 dumps: dumpsRoot.appending(path: dumps),
-                guestDumps: "\(guestDumpsRoot)/\(dumps)"
+                machineDumps: "\(machineDumpsRoot)/\(dumps)"
             )
         }
 
@@ -214,8 +265,8 @@ public struct SimulatedBaselineRecorder: Sendable {
             baselineName: baselineName,
             machine: BenchmarkMachine(
                 hostname: "benchmark-harness",
-                processors: cpus,
-                processorType: "aarch64 (Callgrind 3.28.0 simulation)",
+                processors: processors,
+                processorType: "\(architecture) (Callgrind 3.28.0 simulation)",
                 memory: memoryGiB,
                 kernelVersion: "Linux \(kernelVersion)"
             ),
@@ -227,6 +278,8 @@ public struct SimulatedBaselineRecorder: Sendable {
             try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
             try encoder.encode(perTarget).write(to: file, options: .atomic)
         }
+        // Kept when measuring fails, for the Valgrind log an error points at.
+        try? FileManager.default.removeItem(at: dumpsRoot)
         return baseline
     }
 
@@ -351,6 +404,7 @@ public struct SimulatedBaselineRecorder: Sendable {
         return URL(fileURLWithPath: output).standardizedFileURL.resolvingSymlinksInPath()
     }
 
+    #if os(macOS)
     /// The guest kernel, extracted once from the pinned Kata Containers release.
     private static func kernel(in cache: URL) async throws -> URL {
         let kernel = cache.appending(path: "kernel/vmlinux-6.12.28-153")
@@ -369,6 +423,7 @@ public struct SimulatedBaselineRecorder: Sendable {
         }
         return kernel
     }
+    #endif
 
     /// Copies the scripts and sources the guest runs onto the shared volume, into a directory
     /// named by their digest, and returns it.

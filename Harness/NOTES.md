@@ -68,3 +68,23 @@ simulated pass requests only the simulated metrics and a second process, without
 the same shim and iteration count, measures the counted ones. On ECS's `spawn three components`
 the simulated counts are unchanged (1,695,460,606 instructions) and the native pass reports 302
 allocations, 4 retains and 357 releases per measurement.
+
+## A Linux host against the virtual machine
+
+On Linux the tool runs the guest scripts on the host (`HostMachine`), with Valgrind and the shim
+under the cache instead of `/opt`. Recorded in the guest's Swift image under Docker (OrbStack's
+kernel 7.0.11, aarch64) and compared with the virtual machine (kernel 6.12.28) on this repository's
+`Benchmarks/`:
+
+- Three instruction medians match exactly (69,012; 4,325,375; 5,369,855); the fourth differs by
+  61 of 3.2 million (3,187,576 against 3,187,515). Each run's minimum is the same.
+- An empty measurement window costs 2,352 instructions on that kernel against 424 in the virtual
+  machine: ordo-one's clock and counter reads cost what the kernel's vDSO and system calls cost.
+  The calibration window is subtracted, so per-iteration counts don't carry it.
+- Level-1 misses and mispredicted branches differ by up to about 4% on counts in the hundreds,
+  last-level misses by at most 3.
+- Allocation counts, measured natively, differ by up to 2 (20 against 22).
+
+Docker on macOS shares host directories case-insensitively, where Valgrind's documentation install
+fails (`FAQ.html` against `faq.html`); provisioning installs into a staging root and the cache in
+such tests belongs on a Linux volume.

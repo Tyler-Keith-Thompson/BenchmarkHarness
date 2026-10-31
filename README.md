@@ -2,8 +2,8 @@
 
 Stable, reproducible benchmark numbers for [ordo-one/benchmark](https://github.com/ordo-one/benchmark)
 on a machine that is busy with other work. Instead of timing each iteration, the
-`benchmark-harness` tool runs the benchmark executables unchanged inside a Linux virtual machine,
-under Valgrind's Callgrind on a fixed simulated cache and branch predictor, and counts the work
+`benchmark-harness` tool runs the benchmark executables unchanged on Linux (in a virtual machine on
+macOS, directly on a Linux host such as a CI runner), under Valgrind's Callgrind on a fixed simulated cache and branch predictor, and counts the work
 each iteration does: instructions, cache misses, mispredicted branches and an estimated cycle
 count. Host load changes none of these counts, so two runs agree to within a few instructions. The
 counts are written as an ordinary ordo-one baseline, which `swift package benchmark baseline
@@ -36,9 +36,10 @@ Then add a product to your target, either the umbrella or individual modules:
 
 ### Recording a simulated baseline
 
-The host tool lives in `Harness/` and requires macOS 26 on Apple silicon, because it boots its
-virtual machine through Apple's Containerization framework. Benchmarks are declared as ordo-one
-declares them; nothing in a benchmark target changes.
+The host tool lives in `Harness/`. On macOS it requires macOS 26 on Apple silicon, because it
+boots a Linux virtual machine through Apple's Containerization framework; on Linux it runs on the
+host itself. Benchmarks are declared as ordo-one declares them; nothing in a benchmark target
+changes.
 
 ```sh
 just harness   # build and sign Harness/.build/release/benchmark-harness
@@ -46,12 +47,11 @@ Harness/.build/release/benchmark-harness baseline update main --package-path Ben
 cd Benchmarks && swift package benchmark baseline compare main
 ```
 
-`baseline update` builds every target that uses `BenchmarkPlugin` in release inside the virtual
-machine, runs each benchmark through ordo-one's own runner protocol, and writes
+`baseline update` builds every target that uses `BenchmarkPlugin` in release on Linux, runs each benchmark through ordo-one's own runner protocol, and writes
 `.benchmarkBaselines/<target>/<name>/results.json`. `--target`, `--filter` and `--skip` narrow the
 run, as they do for `swift package benchmark`. The first run downloads a Linux kernel, the Swift
 image and Valgrind, and builds Valgrind; later runs reuse the cache in
-`~/Library/Caches/BenchmarkHarness`.
+`~/Library/Caches/BenchmarkHarness` (`~/.cache/BenchmarkHarness` on Linux).
 
 Simulation is slow: a measured iteration runs roughly fifty times slower than natively. The tool
 keeps that cost to what is measured:
@@ -63,13 +63,31 @@ keeps that cost to what is measured:
   iteration, so registration, setup and warmup run several times faster.
 - Each benchmark runs in a process of its own, so its counts don't depend on which benchmarks ran
   before it or were filtered out, and benchmarks are measured side by side (`--jobs`, by default
-  the virtual machine's `--cpus`), since one Callgrind process uses one processor.
+  the virtual machine's `--cpus`, or the host's processors on Linux), since one Callgrind process
+  uses one processor.
 
 Several runs, from different packages or checkouts, can run at once.
 
 The virtual machine has no network interface. Package resolution inside it goes through an HTTPS
 `CONNECT` proxy that listens on a Unix socket readable only by the current user and admits port
 443 alone.
+
+#### On a Linux host
+
+On Linux, such as a CI runner, the tool needs a Swift 6.3 toolchain and, the first time, `make`,
+`gcc`, the C library headers, `bzip2` and `patch` to build Valgrind; run as root with `apt-get`, it
+installs those itself. Build it with SwiftPM rather than `just harness`:
+
+```sh
+swift build -c release --package-path Harness --product benchmark-harness
+Harness/.build/release/benchmark-harness baseline update main --package-path Benchmarks
+```
+
+Counts depend on the processor architecture, the Swift toolchain and the Valgrind build, so compare
+baselines recorded on the same kind of machine. On aarch64 with the virtual machine's Swift image,
+instruction counts match the virtual machine's; cache misses and mispredicted branches differ by
+up to a few percent on small counts, and allocation counts by a few. Recording both baselines of a
+comparison on the same host avoids depending on any of that.
 
 ### The library
 

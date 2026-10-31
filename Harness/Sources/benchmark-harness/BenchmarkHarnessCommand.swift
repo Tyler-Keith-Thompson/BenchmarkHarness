@@ -20,7 +20,7 @@ struct Baseline: AsyncParsableCommand {
 
 struct Update: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "Measure the package's benchmarks under Callgrind in a Linux virtual machine and store the results as an ordo-one/benchmark baseline.",
+        abstract: "Measure the package's benchmarks under Callgrind on Linux (a virtual machine on macOS, the host itself on Linux) and store the results as an ordo-one/benchmark baseline.",
         discussion: """
             Compare baselines with ordo-one/benchmark's own tool, for example:
               swift package benchmark baseline compare main pull-request
@@ -42,13 +42,13 @@ struct Update: AsyncParsableCommand {
     @Option(name: .customLong("skip"), help: "Skip benchmarks whose name matches this regular expression. Repeatable.")
     var skips: [String] = []
 
-    @Option(help: "The virtual machine's processors.")
+    @Option(help: "The virtual machine's processors (macOS only).")
     var cpus: Int = 4
 
-    @Option(help: "The virtual machine's memory, in GiB.")
+    @Option(help: "The virtual machine's memory, in GiB (macOS only).")
     var memory: Int = 16
 
-    @Option(help: "Benchmark targets measured at once (default: --cpus); the counts don't depend on load.")
+    @Option(help: "Benchmarks measured at once (default: --cpus on macOS, the host's processors on Linux); the counts don't depend on load.")
     var jobs: Int?
 
     @Option(help: "Measured iterations per benchmark (fewer if its own maxIterations is lower), in place of its wall-clock limit.")
@@ -75,7 +75,11 @@ struct Update: AsyncParsableCommand {
         recorder.cpus = cpus
         recorder.memoryGiB = memory
         recorder.iterations = iterations
+        #if os(Linux)
+        recorder.jobs = jobs ?? ProcessInfo.processInfo.activeProcessorCount
+        #else
         recorder.jobs = jobs ?? cpus
+        #endif
         let baseline = try await recorder.record()
         print("Wrote baseline '\(baseline.baselineName)' for \(baseline.results.count) benchmarks")
     }

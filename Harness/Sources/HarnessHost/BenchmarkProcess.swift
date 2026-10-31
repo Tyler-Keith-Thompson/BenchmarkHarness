@@ -3,23 +3,25 @@ import BenchmarkCommands
 import Foundation
 import SimulatedMetrics
 
-/// One run of a benchmark executable under Callgrind in the guest, driven by ordo-one/benchmark's
-/// runner protocol.
-struct BenchmarkProcess: Sendable {
+/// One run of a benchmark executable under Callgrind on a Linux machine, driven by
+/// ordo-one/benchmark's runner protocol.
+struct BenchmarkProcess<Runner: Machine>: Sendable {
     /// The benchmark target the executable was built from.
     let target: String
-    /// The executable's path in the guest.
+    /// The executable's path on the machine.
     let executable: String
-    /// The guest the executable runs in.
-    let guest: GuestMachine
-    /// The guest path of `run-benchmarks.sh`.
+    /// The machine the executable runs on.
+    let machine: Runner
+    /// The machine's path of `run-benchmarks.sh`.
     let script: String
+    /// The machine's path of the prefix Valgrind and the shim are installed under.
+    let prefix: String
     /// The iterations each benchmark measures.
     let iterations: Int
     /// The host directory the process's dumps and Valgrind log are written to.
     let dumps: URL
-    /// The same directory, as the guest sees it.
-    let guestDumps: String
+    /// The same directory, as the machine sees it.
+    let machineDumps: String
     /// Whether the executable runs without Valgrind, for ``count(_:metrics:)``.
     var native = false
 
@@ -96,10 +98,11 @@ struct BenchmarkProcess: Sendable {
     ) async throws -> Result {
         let (requests, requestContinuation) = AsyncStream.makeStream(of: Data.self)
         let (replies, replyContinuation) = AsyncStream.makeStream(of: Data.self)
-        async let exitCode = guest.run(
-            ["/bin/bash", script, executable, guestDumps, String(iterations), native ? "native" : "callgrind"],
-            standardInput: StreamReader(source: requests),
-            standardOutput: StreamWriter(continuation: replyContinuation)
+        async let exitCode = machine.run(
+            ["/bin/bash", script, prefix, executable, machineDumps, String(iterations), native ? "native" : "callgrind"],
+            environment: [],
+            input: requests,
+            output: replyContinuation
         )
         var channel = BenchmarkChannel(input: requestContinuation, output: replies)
         let result: Result

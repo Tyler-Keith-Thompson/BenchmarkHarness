@@ -1,6 +1,6 @@
+#if os(macOS)
 import Containerization
 import Foundation
-import Synchronization
 
 /// A Linux virtual machine running one container, booted through Apple's Containerization
 /// framework, in which the harness runs commands.
@@ -8,7 +8,7 @@ import Synchronization
 /// The container has no network interface. Its main process bridges the guest's loopback port
 /// ``proxyPort`` to the host's ``ConnectProxy``, relayed into the guest as a Unix socket, so
 /// commands reach the network only through the proxy.
-public actor GuestMachine {
+public actor GuestMachine: Machine {
     /// A host directory shared with the guest.
     public struct Share: Sendable {
         /// The directory on the host.
@@ -32,10 +32,9 @@ public actor GuestMachine {
     /// The guest loopback port the proxy bridge listens on.
     public static let proxyPort = 3128
     /// The environment that routes a guest command's HTTPS traffic through the proxy.
-    public static let proxyEnvironment = [
-        "https_proxy=http://127.0.0.1:\(proxyPort)",
-        "HTTPS_PROXY=http://127.0.0.1:\(proxyPort)",
-    ]
+    public nonisolated var networkEnvironment: [String] {
+        ["https_proxy=http://127.0.0.1:\(Self.proxyPort)", "HTTPS_PROXY=http://127.0.0.1:\(Self.proxyPort)"]
+    }
 
     private var manager: ContainerManager
     private let container: LinuxContainer
@@ -104,54 +103,25 @@ public actor GuestMachine {
         return GuestMachine(manager: manager, container: container, id: id)
     }
 
-    /// Runs a command to completion.
-    ///
-    /// - Parameters:
-    ///   - arguments: The program and its arguments.
-    ///   - environment: `NAME=value` pairs added to the default `PATH`.
-    ///   - workingDirectory: The guest directory to run in.
-    ///   - standardInput: The command's input, or `nil` for none.
-    ///   - standardOutput: Where the command's output goes; by default the host's standard error.
-    /// - Returns: The command's exit code.
-    @discardableResult
     public func run(
         _ arguments: [String],
-        environment: [String] = [],
-        workingDirectory: String = "/",
-        standardInput: (any ReaderStream)? = nil,
-        standardOutput: any Writer = StandardError()
+        environment: [String],
+        input: AsyncStream<Data>?,
+        output: AsyncStream<Data>.Continuation?
     ) async throws -> Int32 {
         processCount += 1
         let process = try await container.exec("\(id)-\(processCount)") { @Sendable configuration in
             configuration.arguments = arguments
             configuration.environmentVariables += environment
-            configuration.workingDirectory = workingDirectory
-            configuration.stdin = standardInput
-            configuration.stdout = standardOutput
+            configuration.workingDirectory = "/"
+            configuration.stdin = input.map(StreamReader.init(source:))
+            configuration.stdout = output.map { StreamWriter(continuation: $0) } ?? StandardError()
             configuration.stderr = StandardError()
         }
         try await process.start()
         let status = try await process.wait()
         try? await process.delete()
         return status.exitCode
-    }
-
-    /// Runs a command and returns its standard output.
-    ///
-    /// - Throws: ``GuestCommandFailed`` when the command exits with a non-zero code.
-    public func output(_ arguments: [String], environment: [String] = []) async throws -> Data {
-        let collector = OutputCollector()
-        let code = try await run(arguments, environment: environment, standardOutput: collector)
-        guard code == 0 else { throw GuestCommandFailed(arguments: arguments, exitCode: code) }
-        return collector.data
-    }
-
-    /// Runs a command, throwing when it fails.
-    ///
-    /// - Throws: ``GuestCommandFailed`` when the command exits with a non-zero code.
-    public func check(_ arguments: [String], environment: [String] = []) async throws {
-        let code = try await run(arguments, environment: environment)
-        guard code == 0 else { throw GuestCommandFailed(arguments: arguments, exitCode: code) }
     }
 
     /// Stops the guest and deletes its container.
@@ -161,39 +131,10 @@ public actor GuestMachine {
     }
 }
 
-/// The error thrown when a guest command exits with a non-zero code.
-public struct GuestCommandFailed: Error, CustomStringConvertible, Sendable {
-    /// The command.
-    public let arguments: [String]
-    /// Its exit code.
-    public let exitCode: Int32
-
-    public var description: String {
-        "\(arguments.joined(separator: " ")) exited with code \(exitCode)"
-    }
-}
-
 /// Writes a guest stream to the host's standard error.
-public struct StandardError: Writer {
-    public init() {}
-
-    public func write(_ data: Data) throws {
-        try FileHandle.standardError.write(contentsOf: data)
-    }
-
-    public func close() throws {}
-}
-
-/// Collects a guest stream in memory.
-final class OutputCollector: Writer {
-    private let buffer = Mutex(Data())
-
-    var data: Data {
-        buffer.withLock { $0 }
-    }
-
+struct StandardError: Writer {
     func write(_ data: Data) throws {
-        buffer.withLock { $0.append(data) }
+        try FileHandle.standardError.write(contentsOf: data)
     }
 
     func close() throws {}
@@ -220,3 +161,4 @@ struct StreamReader: ReaderStream {
         source
     }
 }
+#endif

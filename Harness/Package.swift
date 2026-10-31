@@ -1,10 +1,11 @@
 // swift-tools-version: 6.3
 import PackageDescription
 
-// The host tool, in a package of its own: it boots a Linux virtual machine through Apple's
-// Containerization framework, which needs macOS 26, so the library and its tests stay free of it.
-// Bazel ignores this directory (.bazelignore). Build it with `just harness`, which also signs the
-// executable with the virtualization entitlement.
+// The host tool, in a package of its own. On macOS it boots a Linux virtual machine through Apple's
+// Containerization framework, which needs macOS 26, so the library and its tests stay free of it;
+// on Linux it runs on the host and builds without the framework. Bazel ignores this directory
+// (.bazelignore). On macOS build it with `just harness`, which also signs the executable with the
+// virtualization entitlement.
 
 let package = Package(
     name: "BenchmarkHarnessHost",
@@ -17,6 +18,7 @@ let package = Package(
         .package(name: "BenchmarkHarness", path: ".."),
         .package(url: "https://github.com/apple/containerization", exact: "0.54.0"),
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.6.0"),
+        .package(url: "https://github.com/apple/swift-crypto", from: "3.0.0"),
         .package(url: "https://github.com/apple/swift-nio", from: "2.80.0"),
     ],
     targets: [
@@ -27,7 +29,8 @@ let package = Package(
                 .product(name: "BenchmarkCommands", package: "BenchmarkHarness"),
                 .product(name: "Callgrind", package: "BenchmarkHarness"),
                 .product(name: "SimulatedMetrics", package: "BenchmarkHarness"),
-                .product(name: "Containerization", package: "containerization"),
+                .product(name: "Containerization", package: "containerization", condition: .when(platforms: [.macOS])),
+                .product(name: "Crypto", package: "swift-crypto"),
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
             ],

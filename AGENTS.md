@@ -1,10 +1,10 @@
 # BenchmarkHarness: notes for coding agents
 
 BenchmarkHarness gives ordo-one/benchmark suites numbers that stay put on a busy machine: the
-`benchmark-harness` host tool (`Harness/`) runs benchmark executables, as declared, in a Linux VM
-under Callgrind, and writes the simulated counts as an ordo-one baseline. It optimizes for
-run-to-run stability over wall-clock realism; the owner uses it across many projects that
-benchmark concurrently. Swift 6.3 (minimum).
+`benchmark-harness` host tool (`Harness/`) runs benchmark executables, as declared, on Linux (a VM
+on macOS, the host itself on Linux) under Callgrind, and writes the simulated counts as an ordo-one
+baseline. It optimizes for run-to-run stability over wall-clock realism; the owner uses it across
+many projects that benchmark concurrently. Swift 6.3 (minimum).
 Bazel is the development build; SwiftPM is the published package. `README.md` is the user-facing
 overview.
 
@@ -26,9 +26,11 @@ tools/                           Bazel rule wrappers (warnings as errors, Swift 
 `Benchmarks/` is a separate SwiftPM package (ordo-one/benchmark) that Bazel ignores; see
 `Benchmarks/README.md`.
 
-`Harness/` is another separate SwiftPM package that Bazel ignores: the macOS 26 host tool, built on
-apple/containerization. `just harness` builds and signs it (the virtualization entitlement),
-`just harness-test` runs its tests. `Harness/Sources/HarnessHost/Guest/` holds what runs inside the
+`Harness/` is another separate SwiftPM package that Bazel ignores: the host tool, built on
+apple/containerization on macOS 26 and without it on Linux, where `HostMachine` runs the same guest
+scripts on the host. `just harness` builds and signs it (the virtualization entitlement),
+`just harness-test` runs its tests; check Linux changes in the guest's Swift image (`docker run`
+of `GuestMachine.image`). `Harness/Sources/HarnessHost/Guest/` holds what runs inside the
 VM: the provisioning and run scripts, `perfshim.c` (fakes ordo-one's Linux perf counter so its
 measurement window drives Callgrind), and a local Valgrind patch recorded in `Harness/NOTES.md`.
 Private API is allowed in `Harness/`.

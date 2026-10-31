@@ -1,5 +1,8 @@
-import CryptoKit
+import Crypto
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// A file fetched once, by URL, and accepted only when its SHA-256 digest matches.
 ///
