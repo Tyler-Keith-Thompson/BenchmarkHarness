@@ -71,6 +71,7 @@ Every shell command gets a timeout. macOS has no `timeout`; use
 | `just bench [--target X]` | Benchmarks; `just bench-compare` against the `main` baseline |
 | `just docs` | Combined DocC site into `.build/docs` |
 | `just generate` | Xcode project from the Bazel graph |
+| `just template-update` | Merge the project template's changes since `.template.json`'s commit; resolve conflicts, then `just modules`, `just test` |
 | `bazel query 'rdeps(//Tests/..., //Sources/X)'` | Test targets affected by a change to X |
 
 - Debug is the default configuration. Every test target except the `XPerformanceTests` ones is

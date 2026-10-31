@@ -110,3 +110,10 @@ deps target="//Sources/BenchmarkHarness":
 [doc('List every buildable target')]
 targets:
     {{BAZEL}} query '//...' --output=label_kind
+
+# The checkout of ProjectTemplate this project came from; .template.json records the commit.
+PROJECT_TEMPLATE := env("PROJECT_TEMPLATE", home_directory() / "workspace" / "ProjectTemplate")
+
+[doc('Merge the project template’s changes since .template.json’s commit into this checkout (needs a clean worktree), e.g. just template-update, or just template-update --to <commit>')]
+template-update *args="":
+    python3 {{PROJECT_TEMPLATE}}/template.py update {{PROJECT_ROOT}} {{args}}
