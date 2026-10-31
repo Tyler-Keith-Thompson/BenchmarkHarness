@@ -137,13 +137,17 @@ Watch for these:
 | `scripts/modules.py` | `just modules`, `just test` (which runs `//:package_swift_test`), `just spm` |
 | `Benchmarks/`, or an API the benchmarks call | `cd Benchmarks && env -u TOOLCHAINS xcrun --toolchain default swift build -c release` |
 
-### Before a push
+### Pushing
 
-Every push to `main` releases a patch version, and CI minutes are scarce, so batch pushes.
+Push finished work to `main` yourself; don't wait to be asked, and never end a task with
+finished commits unpushed. Every push to `main` releases a patch version, and CI minutes are
+scarce, so push once per batch rather than once per commit: when the work the owner gave you is
+done (the whole request, or Ready is empty when working the backlog), push everything it
+produced together.
 
 1. Verify the committed state in a clean worktree: `bazel test //...` in debug, then
    `--config=release`.
-2. Watch the Release and DocC workflows to green, and fix anything that breaks.
+2. Push, then watch the Release and DocC workflows to green, and fix anything that breaks.
 3. Don't add CI steps that rebuild without the owner's approval.
 
 ## House rules
