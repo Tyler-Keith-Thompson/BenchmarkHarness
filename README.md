@@ -66,7 +66,8 @@ keeps that cost to what is measured:
   the virtual machine's `--cpus`, or the host's processors on Linux), since one Callgrind process
   uses one processor.
 
-Several runs, from different packages or checkouts, can run at once.
+Several runs, from different packages or checkouts, can run at once. Runs on the same checkout
+take turns, since they share its build products.
 
 The virtual machine has no network interface. Package resolution inside it goes through an HTTPS
 `CONNECT` proxy that listens on a Unix socket readable only by the current user and admits port
