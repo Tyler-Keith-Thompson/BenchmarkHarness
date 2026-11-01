@@ -84,7 +84,7 @@ public struct SimulatedBaselineRecorder: Sendable {
         let run = "\(ProcessInfo.processInfo.processIdentifier)-\(UUID().uuidString.prefix(8))"
         let dumpsRoot = shared.appending(path: "dumps").appending(path: run)
         let valgrindSource = try await PinnedDownload.valgrindSource.fetch(into: shared.appending(path: "downloads"))
-        let patch = try Data(contentsOf: files.appending(path: "valgrind-rt_sigsuspend.patch"))
+        let patch = try Data(contentsOf: files.appending(path: "valgrind.patch"))
         let valgrindBuild = "valgrind-3.28.0-\(Self.digest(patch).prefix(12))"
 
         #if os(macOS)

@@ -23,6 +23,11 @@ benchmarks of a module: three benchmarks measure the same thousand calls, whole 
 own `startMeasurement()` and `stopMeasurement()` after costly setup, so their simulated instruction
 counts must stay within a few hundred of each other.
 
+`Benchmarks/LongIterationBenchmarks/` is another fixture: one benchmark whose iteration is a naive
+scan of a thousand patterns at every offset of a 10⁵-byte text, about 1.3 billion instructions
+taken through tight loops in a single call. Under Callgrind it must finish in a few minutes rather
+than grow Valgrind's memory until the guest kills it.
+
 `just bench-simulated` counts instructions, cache misses and mispredicted branches under Callgrind
 instead of timing, so its baselines don't move when the machine is busy. Compare against one as
 against any other: `swift package benchmark baseline compare main`.

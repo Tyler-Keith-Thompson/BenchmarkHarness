@@ -118,6 +118,11 @@ public actor GuestMachine: Machine {
             configuration.stdout = output.map { StreamWriter(continuation: $0) } ?? StandardError()
             configuration.stderr = StandardError()
         }
+        // Containerization doesn't always close the writer when the process exits (a benchmark that
+        // calls exit(3) mid-protocol leaves it open), so the output also ends here, once the
+        // process has exited; a reader waiting for a reply then sees the end instead of waiting
+        // forever.
+        defer { output?.finish() }
         try await process.start()
         let status = try await process.wait()
         try? await process.delete()

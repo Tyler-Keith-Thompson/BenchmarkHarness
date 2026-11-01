@@ -41,6 +41,19 @@ struct HostMachineTests {
         #expect(try await machine.run(["/bin/sh", "-c", "kill -9 $$"]) == killed)
     }
 
+    @Test("A command that exits while its input is still open ends its output and returns its code")
+    func exitsWithInputOpen() async throws {
+        let (input, inputContinuation) = AsyncStream.makeStream(of: Data.self)
+        let (output, outputContinuation) = AsyncStream.makeStream(of: Data.self)
+        async let code = HostMachine().run(["/bin/sh", "-c", "exit 4"], environment: [], input: input, output: outputContinuation)
+        var chunks = 0
+        for await _ in output { chunks += 1 }
+        let expectedCode: Int32 = 4
+        #expect(try await code == expectedCode)
+        #expect(chunks == 0)
+        inputContinuation.finish()
+    }
+
     @Test("Input streams to the command and its output streams back, chunk by chunk, until the input ends")
     func streams() async throws {
         let (input, inputContinuation) = AsyncStream.makeStream(of: Data.self)

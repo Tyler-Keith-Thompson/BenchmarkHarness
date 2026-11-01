@@ -23,6 +23,12 @@ let package = Package(
             plugins: [.plugin(name: "BenchmarkPlugin", package: "benchmark")]
         ),
         .executableTarget(
+            name: "LongIterationBenchmarks",
+            dependencies: [.product(name: "Benchmark", package: "benchmark")],
+            path: "Benchmarks/LongIterationBenchmarks",
+            plugins: [.plugin(name: "BenchmarkPlugin", package: "benchmark")]
+        ),
+        .executableTarget(
             name: "MeasurementWindowBenchmarks",
             dependencies: [.product(name: "Benchmark", package: "benchmark")],
             path: "Benchmarks/MeasurementWindowBenchmarks",

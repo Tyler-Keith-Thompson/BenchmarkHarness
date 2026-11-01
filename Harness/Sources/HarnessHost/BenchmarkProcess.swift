@@ -27,7 +27,7 @@ struct BenchmarkProcess<Runner: Machine>: Sendable {
 
     /// The executable's benchmarks.
     func list() async throws -> [Benchmark] {
-        try await session { channel in
+        try await session(benchmark: nil) { channel in
             channel.send(.list)
             var benchmarks: [Benchmark] = []
             while true {
@@ -45,7 +45,7 @@ struct BenchmarkProcess<Runner: Machine>: Sendable {
     func measure(_ benchmark: Benchmark) async throws -> [BenchmarkResult] {
         FileHandle.standardError.write(Data("Measuring \(target): \(benchmark.name)\n".utf8))
         let started = ContinuousClock.now
-        return try await session { channel in
+        return try await session(benchmark: benchmark.name) { channel in
             channel.send(.run(benchmark: benchmark.measuring([.instructions])))
             running: while true {
                 switch try await channel.receive() {
@@ -75,7 +75,7 @@ struct BenchmarkProcess<Runner: Machine>: Sendable {
     /// The instruction counter is requested too, though its counts are dropped: its reads are the
     /// measurement windows the shim counts iterations by.
     func count(_ benchmark: Benchmark, metrics: [BenchmarkMetric]) async throws -> [BenchmarkResult] {
-        try await session { channel in
+        try await session(benchmark: benchmark.name) { channel in
             channel.send(.run(benchmark: benchmark.measuring(metrics + [.instructions])))
             var results: [BenchmarkResult] = []
             while true {
@@ -91,9 +91,11 @@ struct BenchmarkProcess<Runner: Machine>: Sendable {
 
     /// Starts the executable, runs `body` against its protocol channel, then ends it.
     ///
-    /// - Throws: ``BenchmarkFailed`` when the executable exits with a non-zero code, and whatever
-    ///   `body` throws.
+    /// - Parameter benchmark: The benchmark the session runs, if any, for error messages.
+    /// - Throws: ``BenchmarkFailed`` when the executable exits with a non-zero code or before
+    ///   replying, and whatever else `body` throws.
     private func session<Result: Sendable>(
+        benchmark: String?,
         _ body: (inout BenchmarkChannel) async throws -> Result
     ) async throws -> Result {
         let (requests, requestContinuation) = AsyncStream.makeStream(of: Data.self)
@@ -110,6 +112,14 @@ struct BenchmarkProcess<Runner: Machine>: Sendable {
             result = try await body(&channel)
             channel.send(.end)
             channel.finish()
+        } catch is BenchmarkExecutableExited {
+            channel.finish()
+            let code = (try? await exitCode).map(String.init) ?? "unknown"
+            throw BenchmarkFailed(
+                target: target,
+                benchmark: benchmark,
+                description: "\(target)\(benchmark.map { ": \($0)" } ?? ""): the executable exited with code \(code) before replying; see \(dumps.appending(path: "valgrind.log").path)"
+            )
         } catch {
             channel.finish()
             _ = try? await exitCode

@@ -2,7 +2,7 @@
 # Installs the patched Valgrind and the counter shim under a prefix: /opt in the guest, a cache
 # directory on a Linux host.
 #
-# The first run builds Valgrind from the verified source tarball, with the rt_sigsuspend patch, and
+# The first run builds Valgrind from the verified source tarball, with the local patch (NOTES.md), and
 # caches the installation as an archive; later runs only unpack it, once per prefix. Building needs
 # make, gcc, the C library's headers, bzip2 and patch; as root with apt-get they are installed when
 # missing. Concurrent runs may share a prefix: each step lands by an atomic rename.
@@ -35,7 +35,7 @@ if [ ! -f "$archive" ]; then
     build=$(mktemp -d)
     tar -xjf "$tarball" -C "$build"
     cd "$build"/valgrind-*
-    patch -p1 --quiet < "$files/valgrind-rt_sigsuspend.patch"
+    patch -p1 --quiet < "$files/valgrind.patch"
     log=$(mktemp)
     # Installed into a staging root, so a failed build leaves nothing under the prefix.
     if ! { ./configure --prefix="$prefix/valgrind" && make -j"$(nproc)" && make install DESTDIR="$build/root"; } >"$log" 2>&1; then

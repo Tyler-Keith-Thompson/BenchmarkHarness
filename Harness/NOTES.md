@@ -7,8 +7,31 @@ client's mask in place (`VG_(sigdelset)` on `ARG1`). libdispatch passes a mask t
 read-only memory, so any Swift executable that parks a dispatch worker under Valgrind dies with
 SIGSEGV in `vgPlain_sigdelset`. Also seen on 3.22.
 
-`Sources/HarnessHost/Guest/valgrind-rt_sigsuspend.patch` copies the mask into per-thread storage
-and points the syscall at the copy. `provision.sh` applies it before building Valgrind.
+The first hunk of `Sources/HarnessHost/Guest/valgrind.patch` copies the mask into per-thread
+storage and points the syscall at the copy. `provision.sh` applies the patch before building
+Valgrind.
+
+Not reported upstream.
+
+## Valgrind 3.28.0: arm64 `B` is decoded as a call
+
+`dis_ARM64_branch_etc` in `VEX/priv/guest_arm64_toIR.c` ends every unconditional immediate branch
+with `Ijk_Call`, `B` as well as `BL`. Callgrind pushes a call-stack frame for each call and pops
+frames only when the stack pointer rises past them or a return matches, so every `B` a function
+takes adds a frame that stays until the function returns. A function whose loops take ~10⁸
+branches in one call (a naive scan over a 10⁵-byte text) grows Callgrind's call stack by gigabytes
+until the kernel's OOM killer ends Valgrind; its call graph shows the function recursing into
+itself. Instruction, cache and branch counts are unaffected.
+
+The second hunk of `valgrind.patch` marks `B` as `Ijk_Boring`. Not reported upstream.
+
+## Containerization: an exec'd process's standard output can stay open after it exits
+
+With apple/containerization 0.54.0, a process started with `LinuxContainer.exec` whose standard
+output goes to a custom `Writer` exits (`wait()` returns its status), yet the writer's `close()`
+is not called; seen with a benchmark executable that calls `exit(3)` while its standard input is
+still open. A reader of that output waits forever. `GuestMachine.run` therefore finishes its output
+stream itself once the process has exited.
 
 Not reported upstream.
 
