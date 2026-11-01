@@ -118,12 +118,18 @@ struct BenchmarkBaselineTests {
         let results = try #require(object["results"] as? [Any])
         let first = try #require(results[0] as? [String: String])
         let third = try #require(results[2] as? [String: String])
-        let expectedMachine: [String: AnyHashable] = [
-            "hostname": "guest", "processors": 8, "processorType": "aarch64", "memory": 8, "kernelVersion": "6.12.28",
-        ]
+        // Field by field with typed casts: on Linux, AnyHashable of JSONSerialization's numbers
+        // is not equal to AnyHashable of an Int literal.
+        let encodedMachine = try #require(object["machine"] as? [String: Any])
+        let expectedMachineKeys: Set<String> = ["hostname", "processors", "processorType", "memory", "kernelVersion"]
         #expect(Set(object.keys) == ["baselineName", "machine", "results"])
         #expect(object["baselineName"] as? String == "main")
-        #expect((object["machine"] as? [String: AnyHashable]) == expectedMachine)
+        #expect(Set(encodedMachine.keys) == expectedMachineKeys)
+        #expect(encodedMachine["hostname"] as? String == "guest")
+        #expect(encodedMachine["processors"] as? Int == 8)
+        #expect(encodedMachine["processorType"] as? String == "aarch64")
+        #expect(encodedMachine["memory"] as? Int == 8)
+        #expect(encodedMachine["kernelVersion"] as? String == "6.12.28")
         #expect(results.count == 4)
         #expect(first == ["target": "A", "name": "z"])
         #expect(third == ["target": "B", "name": "a"])
