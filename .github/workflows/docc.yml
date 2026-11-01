@@ -55,10 +55,11 @@ jobs:
       - name: Generate the combined documentation
         run: |
           bazel build //:docs
-          cp -RL bazel-bin/docs ./docs
-          chmod -R u+w ./docs
+          # Not ./docs: the repository's docs/ holds Markdown, and cp would nest the site inside it.
+          cp -RL bazel-bin/docs ./site
+          chmod -R u+w ./site
       - name: Deploy
         uses: peaceiris/actions-gh-pages@v4.1.0
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./docs
+          publish_dir: ./site
