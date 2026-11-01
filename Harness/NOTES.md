@@ -99,3 +99,21 @@ reproduce it, so the trigger is not pinned down. `stage.sh` now records the stag
 scratch directory and deletes SwiftPM's cached plans (`*.yaml`, `description.json`) when they
 change, so a build after an added, removed or renamed file always plans again; compiled products
 are kept.
+
+## Explicit startMeasurement() and stopMeasurement()
+
+A closure that calls `startMeasurement()` resets and reads the counters again, after its setup, and
+one that calls `stopMeasurement()` reads them in place of ordo-one's closing read, so an iteration
+is `RESET, read, setup, RESET, read, measured part, read`. The shim toggled a window on every read,
+so it dumped the setup as an iteration and fell out of phase: ECS's ordered-index benchmarks
+recorded samples from 3 million to 43 billion instructions within one benchmark. A RESET now
+discards an open window (`CALLGRIND_ZERO_STATS` after collection stops), so a window covers only
+what follows the last RESET.
+
+`Benchmarks/MeasurementWindowBenchmarks` measures a thousand calls three ways. Before the fix:
+9,415 (whole closure), 9,418 to 9,053,531 (after a million calls of setup and
+`startMeasurement()`), 9,489 to 9,125,701 (between `startMeasurement()` and `stopMeasurement()`).
+After: 9,415, 9,607 and 9,678, each with identical samples. The explicit calls' own path costs
+about 200 to 260 instructions more than ordo-one's implicit start and stop; the calibration
+window measures the implicit path, so that difference stays in, constant per benchmark.
+Benchmarks without explicit calls count what they did before, exactly.

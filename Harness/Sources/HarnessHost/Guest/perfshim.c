@@ -7,9 +7,15 @@
 //   calibration:  read, clock read, read            (five times, after an enable, no RESET between)
 //   iteration:    ioctl(RESET), read, closure, read (once per measured iteration)
 //   disable:      ioctl(DISABLE)
-// Every read of the first counter toggles collection. A window opened after a RESET is an
-// iteration; one opened since an enable with no RESET is calibration, which measures the cost of
-// the window itself. Each window is dumped as "iteration" or "calibration". Reads return zero, so
+// A closure that calls startMeasurement() adds its own RESET and read, and one that calls
+// stopMeasurement() reads in place of the closing read, so its iteration is
+//                 ioctl(RESET), read, setup, ioctl(RESET), read, measured part, read
+// A read of the first counter opens a window when one is armed and closes the open one otherwise.
+// A RESET arms a window; one arriving while a window is open discards it (its costs are zeroed),
+// so a window covers only what follows the last RESET: the closure, or the part between its own
+// startMeasurement() and stopMeasurement(). A window opened after a RESET is an iteration; one
+// opened since an enable with no RESET is calibration, which measures the cost of the window
+// itself. Each window is dumped as "iteration" or "calibration". Reads return zero, so
 // ordo-one/benchmark records no instruction counts of its own.
 //
 // The counts don't depend on time, so a benchmark needs only a few iterations, and how many it
@@ -129,6 +135,13 @@ int ioctl(int fd, unsigned long request, ...) {
                     CALLGRIND_STOP_INSTRUMENTATION;
                 }
             } else if (request == PERF_EVENT_IOC_RESET && previous_request != PERF_EVENT_IOC_ENABLE) {
+                if (window_open) {
+                    // startMeasurement() inside the closure: what ran since the window opened is
+                    // setup, not measurement.
+                    CALLGRIND_TOGGLE_COLLECT;
+                    window_open = 0;
+                    CALLGRIND_ZERO_STATS;
+                }
                 calibrating = 0;
                 iteration_armed = 1;
             }

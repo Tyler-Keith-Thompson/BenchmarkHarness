@@ -18,6 +18,11 @@ Each module's benchmarks live in `Benchmarks/<Module>Benchmarks/` and start with
 entry: the hand-written form the library must keep pace with. Only the `main` and `simulated`
 baselines are committed; other names are local before/after comparisons.
 
+`Benchmarks/MeasurementWindowBenchmarks/` holds fixtures for `benchmark-harness` rather than
+benchmarks of a module: three benchmarks measure the same thousand calls, whole and between their
+own `startMeasurement()` and `stopMeasurement()` after costly setup, so their simulated instruction
+counts must stay within a few hundred of each other.
+
 `just bench-simulated` counts instructions, cache misses and mispredicted branches under Callgrind
 instead of timing, so its baselines don't move when the machine is busy. Compare against one as
 against any other: `swift package benchmark baseline compare main`.
