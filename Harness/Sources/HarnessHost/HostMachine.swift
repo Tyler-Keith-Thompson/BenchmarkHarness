@@ -71,10 +71,16 @@ public struct HostMachine: Machine {
         } else {
             nil
         }
+        // Cancelling the task ends the command (SIGTERM), so a stopped run leaves no process behind.
         var code: Int32 = -1
-        for await status in terminated { code = status }
+        await withTaskCancellationHandler {
+            for await status in terminated { code = status }
+        } onCancel: {
+            process.terminate()
+        }
         writer?.cancel()
         for await _ in outputEnded {}
+        try Task.checkCancellation()
         return code
     }
 }

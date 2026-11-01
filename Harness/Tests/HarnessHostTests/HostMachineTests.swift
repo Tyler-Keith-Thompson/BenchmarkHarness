@@ -62,6 +62,19 @@ struct HostMachineTests {
         #expect(short == none)
     }
 
+    @Test("Cancelling run ends the command and throws CancellationError")
+    func cancellation() async throws {
+        let started = ContinuousClock.now
+        let run = Task {
+            try await HostMachine().run(["sleep", "30"])
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        run.cancel()
+        await #expect(throws: CancellationError.self) { try await run.value }
+        let limit = Duration.seconds(10)
+        #expect(started.duration(to: .now) < limit)
+    }
+
     @Test("A command that exits while its input is still open ends its output and returns its code")
     func exitsWithInputOpen() async throws {
         let (input, inputContinuation) = AsyncStream.makeStream(of: Data.self)

@@ -24,6 +24,9 @@ struct Update: AsyncParsableCommand {
         discussion: """
             Compare baselines with ordo-one/benchmark's own tool, for example:
               swift package benchmark baseline compare main pull-request
+
+            The run stops, ending its benchmark processes and virtual machine, on SIGINT, SIGTERM
+            or SIGHUP, and when the process that started it exits.
             """
     )
 
@@ -80,7 +83,8 @@ struct Update: AsyncParsableCommand {
         #else
         recorder.jobs = jobs ?? cpus
         #endif
-        let baseline = try await recorder.record()
+        let configured = recorder
+        let baseline = try await runUntilInterrupted { try await configured.record() }
         print("Wrote baseline '\(baseline.baselineName)' for \(baseline.results.count) benchmarks")
     }
 }

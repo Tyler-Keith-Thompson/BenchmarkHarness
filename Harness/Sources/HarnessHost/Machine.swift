@@ -16,6 +16,7 @@ public protocol Machine: Sendable {
     ///   - output: Where the command's standard output goes, or `nil` for the harness's standard
     ///     error. The continuation is finished before `run` returns.
     /// - Returns: The command's exit code.
+    /// - Throws: `CancellationError` when the task is cancelled, after ending the command.
     func run(
         _ arguments: [String],
         environment: [String],

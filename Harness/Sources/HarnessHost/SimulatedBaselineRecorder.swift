@@ -75,8 +75,9 @@ public struct SimulatedBaselineRecorder: Sendable {
         try FileManager.default.createDirectory(at: shared, withIntermediateDirectories: true)
         // Runs on the same checkout share its staged copy and build products, so they take turns;
         // runs on other checkouts go on at the same time.
-        let lock = try await CheckoutLock(file: shared.appending(path: "locks/\(Self.digest(Data(sourceRoot.path.utf8)).prefix(16)).lock")) {
-            FileHandle.standardError.write(Data("Waiting for another run on \(sourceRoot.path)\n".utf8))
+        let lock = try await CheckoutLock(file: shared.appending(path: "locks/\(Self.digest(Data(sourceRoot.path.utf8)).prefix(16)).lock")) { holder in
+            let process = holder.map { " (process \($0))" } ?? ""
+            FileHandle.standardError.write(Data("Waiting for another run on \(sourceRoot.path)\(process)\n".utf8))
         }
         defer { withExtendedLifetime(lock) {} }
         let files = try Self.installGuestFiles(in: shared)

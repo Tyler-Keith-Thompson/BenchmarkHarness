@@ -67,7 +67,11 @@ keeps that cost to what is measured:
   uses one processor.
 
 Several runs, from different packages or checkouts, can run at once. Runs on the same checkout
-take turns, since they share its build products.
+take turns, since they share its build products; a waiting run names the process it waits for.
+
+A run stops on SIGINT, SIGTERM or SIGHUP, and when the process that started it exits, ending its
+benchmark processes and virtual machine and releasing the checkout. A timeout wrapper around
+`just bench-simulated` therefore stops the run too, though `just` doesn't pass the signal on.
 
 The virtual machine has no network interface. Package resolution inside it goes through an HTTPS
 `CONNECT` proxy that listens on a Unix socket readable only by the current user and admits port

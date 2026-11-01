@@ -16,7 +16,7 @@ struct CheckoutLockTests {
         let waits = Mutex(0)
         let acquired = Mutex(false)
         let second = Task {
-            let lock = try await CheckoutLock(file: file) { waits.withLock { $0 += 1 } }
+            let lock = try await CheckoutLock(file: file) { _ in waits.withLock { $0 += 1 } }
             acquired.withLock { $0 = true }
             withExtendedLifetime(lock) {}
         }
@@ -30,13 +30,30 @@ struct CheckoutLockTests {
         #expect(waits.withLock { $0 } == expectedWaits)
     }
 
+    @Test("A waiting lock is told the holder's process identifier")
+    func namesHolder() async throws {
+        let file = FileManager.default.temporaryDirectory.appending(path: "checkout-lock-\(UUID().uuidString)/a.lock")
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let holder = try await CheckoutLock(file: file)
+        let reported = Mutex<Int32?>(nil)
+        let waiter = Task {
+            _ = try await CheckoutLock(file: file) { process in reported.withLock { $0 = process } }
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        waiter.cancel()
+        _ = try? await waiter.value
+        withExtendedLifetime(holder) {}
+        let expected: Int32? = getpid()
+        #expect(reported.withLock { $0 } == expected)
+    }
+
     @Test("Locks on different files don't wait for each other")
     func differentFiles() async throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: "checkout-lock-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: directory) }
         let waits = Mutex(0)
-        let first = try await CheckoutLock(file: directory.appending(path: "a.lock")) { waits.withLock { $0 += 1 } }
-        let second = try await CheckoutLock(file: directory.appending(path: "b.lock")) { waits.withLock { $0 += 1 } }
+        let first = try await CheckoutLock(file: directory.appending(path: "a.lock")) { _ in waits.withLock { $0 += 1 } }
+        let second = try await CheckoutLock(file: directory.appending(path: "b.lock")) { _ in waits.withLock { $0 += 1 } }
         withExtendedLifetime((first, second)) {}
         #expect(waits.withLock { $0 } == 0)
     }

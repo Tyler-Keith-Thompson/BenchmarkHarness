@@ -124,8 +124,14 @@ public actor GuestMachine: Machine {
         // forever.
         defer { output?.finish() }
         try await process.start()
-        let status = try await process.wait()
+        // Cancelling the task kills the command, so a stopped run leaves no process in the guest.
+        let status = try await withTaskCancellationHandler {
+            try await process.wait()
+        } onCancel: {
+            Task { try? await process.kill(.kill) }
+        }
         try? await process.delete()
+        try Task.checkCancellation()
         return status.exitCode
     }
 
