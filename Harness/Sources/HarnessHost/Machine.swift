@@ -14,8 +14,7 @@ public protocol Machine: Sendable {
     ///   - input: The command's standard input, or `nil` for none. The input ends when the
     ///     sequence finishes.
     ///   - output: Where the command's standard output goes, or `nil` for the harness's standard
-    ///     error. The continuation is finished when the output ends, at the latest when the
-    ///     command exits.
+    ///     error. The continuation is finished before `run` returns.
     /// - Returns: The command's exit code.
     func run(
         _ arguments: [String],
@@ -40,7 +39,6 @@ extension Machine {
     public func output(_ arguments: [String], environment: [String] = []) async throws -> Data {
         let (chunks, continuation) = AsyncStream.makeStream(of: Data.self)
         let code = try await run(arguments, environment: environment, input: nil, output: continuation)
-        continuation.finish()
         guard code == 0 else { throw MachineCommandFailed(arguments: arguments, exitCode: code) }
         var data = Data()
         for await chunk in chunks { data += chunk }

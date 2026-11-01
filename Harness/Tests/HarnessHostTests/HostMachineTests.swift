@@ -41,6 +41,27 @@ struct HostMachineTests {
         #expect(try await machine.run(["/bin/sh", "-c", "kill -9 $$"]) == killed)
     }
 
+    @Test("output returns everything the command wrote, however late its last chunk arrives")
+    func outputIsComplete() async throws {
+        let expected = "counted"
+        let repetitions = 300
+        // Concurrent commands, as in a run measuring several benchmarks at once, widen the window
+        // between a command's termination and its last output arriving.
+        let short = try await withThrowingTaskGroup(of: Bool.self) { group in
+            for _ in 0 ..< repetitions {
+                group.addTask {
+                    let data = try await HostMachine().output(["printf", "%s", expected])
+                    return String(decoding: data, as: UTF8.self) != expected
+                }
+            }
+            var short = 0
+            for try await isShort in group where isShort { short += 1 }
+            return short
+        }
+        let none = 0
+        #expect(short == none)
+    }
+
     @Test("A command that exits while its input is still open ends its output and returns its code")
     func exitsWithInputOpen() async throws {
         let (input, inputContinuation) = AsyncStream.makeStream(of: Data.self)

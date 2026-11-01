@@ -30,21 +30,12 @@ public struct HostMachine: Machine {
         process.environment = variables
         process.standardError = FileHandle.standardError
 
-        if let output {
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            pipe.fileHandleForReading.readabilityHandler = { handle in
-                let data = handle.availableData
-                if data.isEmpty {
-                    handle.readabilityHandler = nil
-                    output.finish()
-                } else {
-                    output.yield(data)
-                }
-            }
-        } else {
-            process.standardOutput = FileHandle.standardError
-        }
+        // Ends once the command's output reaches end of file, which can come after it terminates.
+        // A thread of its own reads until then: on Linux a readability handler isn't told of end
+        // of file once data has arrived.
+        let (outputEnded, outputEndedContinuation) = AsyncStream.makeStream(of: Never.self)
+        let outputPipe = output.map { _ in Pipe() }
+        process.standardOutput = outputPipe ?? FileHandle.standardError
 
         let inputPipe = input.map { _ in Pipe() }
         process.standardInput = inputPipe ?? FileHandle.nullDevice
@@ -56,6 +47,18 @@ public struct HostMachine: Machine {
             terminatedContinuation.finish()
         }
         try process.run()
+        if let output, let outputPipe {
+            let handle = outputPipe.fileHandleForReading
+            Thread {
+                while case let data = handle.availableData, !data.isEmpty {
+                    output.yield(data)
+                }
+                output.finish()
+                outputEndedContinuation.finish()
+            }.start()
+        } else {
+            outputEndedContinuation.finish()
+        }
 
         let writer: Task<Void, Never>? = if let input, let inputPipe {
             Task {
@@ -71,6 +74,7 @@ public struct HostMachine: Machine {
         var code: Int32 = -1
         for await status in terminated { code = status }
         writer?.cancel()
+        for await _ in outputEnded {}
         return code
     }
 }
