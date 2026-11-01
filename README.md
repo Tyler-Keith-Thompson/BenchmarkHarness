@@ -1,153 +1,114 @@
 # BenchmarkHarness
 
-Stable, reproducible benchmark numbers for [ordo-one/benchmark](https://github.com/ordo-one/benchmark)
-on a machine that is busy with other work. Instead of timing each iteration, the
-`benchmark-harness` tool runs the benchmark executables unchanged on Linux (in a virtual machine on
-macOS, directly on a Linux host such as a CI runner), under Valgrind's Callgrind on a fixed simulated cache and branch predictor, and counts the work
-each iteration does: instructions, cache misses, mispredicted branches and an estimated cycle
-count. Host load changes none of these counts, so two runs agree to within a few instructions. The
-counts are written as an ordinary ordo-one baseline, which `swift package benchmark baseline
-compare` and `check` read as they read any other.
+`benchmark-harness` gives your [ordo-one/benchmark](https://github.com/ordo-one/benchmark)
+benchmarks numbers that don't move when the machine is busy: it counts the work each iteration
+does (instructions, cache misses, mispredicted branches) in a simulation instead of timing it, and
+writes the counts as an ordinary ordo-one baseline.
 
-[Documentation](https://tyler-keith-thompson.github.io/BenchmarkHarness/documentation/)
+## Requirements
 
-## Installation
+- macOS 26 on Apple silicon (the tool runs the benchmarks in a Linux virtual machine), or Linux
+  on aarch64 (the tool runs them on the host, for example a CI runner).
+- Swift 6.3.
+- A package whose benchmarks use ordo-one/benchmark. Nothing in them changes.
 
-BenchmarkHarness requires Swift 6.3 and supports macOS 15, iOS 18, tvOS 18, watchOS 11 and visionOS 2
-or later.
+## Install
 
-```swift
-dependencies: [
-    .package(url: "https://github.com/Tyler-Keith-Thompson/BenchmarkHarness", from: "0.0.1"),
-],
-```
-
-Then add a product to your target, either the umbrella or individual modules:
-
-```swift
-.target(name: "MyApp", dependencies: [
-    .product(name: "BenchmarkHarness", package: "BenchmarkHarness"),
-    // or, for example:
-    // .product(name: "SimulatedMetrics", package: "BenchmarkHarness"),
-]),
-```
-
-## Usage
-
-### Recording a simulated baseline
-
-The host tool lives in `Harness/`. On macOS it requires macOS 26 on Apple silicon, because it
-boots a Linux virtual machine through Apple's Containerization framework; on Linux it runs on the
-host itself. Benchmarks are declared as ordo-one declares them; nothing in a benchmark target
-changes.
+On macOS, build the tool and sign it with the virtualization entitlement:
 
 ```sh
-just harness   # build and sign Harness/.build/release/benchmark-harness
-Harness/.build/release/benchmark-harness baseline update main --package-path Benchmarks
-cd Benchmarks && swift package benchmark baseline compare main
+git clone https://github.com/Tyler-Keith-Thompson/BenchmarkHarness && cd BenchmarkHarness/Harness && swift build -c release --product benchmark-harness && codesign --force --sign - --entitlements harness.entitlements .build/release/benchmark-harness
 ```
 
-`baseline update` builds every target that uses `BenchmarkPlugin` in release on Linux, runs each benchmark through ordo-one's own runner protocol, and writes
-`.benchmarkBaselines/<target>/<name>/results.json`. `--target`, `--filter` and `--skip` narrow the
-run, as they do for `swift package benchmark`. The first run downloads a Linux kernel, the Swift
-image and Valgrind, and builds Valgrind; later runs reuse the cache in
-`~/Library/Caches/BenchmarkHarness` (`~/.cache/BenchmarkHarness` on Linux).
-
-Simulation is slow: a measured iteration runs roughly fifty times slower than natively. The tool
-keeps that cost to what is measured:
-
-- Each benchmark measures exactly three iterations (`--iterations`), or fewer when its own
-  `maxIterations` is lower, whatever its time limit and however busy the machine is. Its own
-  warmup iterations run first.
-- Callgrind instruments each benchmark only from the start of its measurement to its last
-  iteration, so registration, setup and warmup run several times faster.
-- Each benchmark runs in a process of its own, so its counts don't depend on which benchmarks ran
-  before it or were filtered out, and benchmarks are measured side by side (`--jobs`, by default
-  the virtual machine's `--cpus`, or the host's processors on Linux), since one Callgrind process
-  uses one processor.
-
-Several runs, from different packages or checkouts, can run at once. Runs on the same checkout
-take turns, since they share its build products; a waiting run names the process it waits for.
-
-A run stops on SIGINT, SIGTERM or SIGHUP, and when the process that started it exits, ending its
-benchmark processes and virtual machine and releasing the checkout. A timeout wrapper around
-`just bench-simulated` therefore stops the run too, though `just` doesn't pass the signal on.
-
-The virtual machine has no network interface. Package resolution inside it goes through an HTTPS
-`CONNECT` proxy that listens on a Unix socket readable only by the current user and admits port
-443 alone.
-
-#### On a Linux host
-
-On Linux, such as a CI runner, the tool needs a Swift 6.3 toolchain and, the first time, `make`,
-`gcc`, the C library headers, `bzip2` and `patch` to build Valgrind; run as root with `apt-get`, it
-installs those itself. Build it with SwiftPM rather than `just harness`:
+On Linux:
 
 ```sh
-swift build -c release --package-path Harness --product benchmark-harness
-Harness/.build/release/benchmark-harness baseline update main --package-path Benchmarks
+git clone https://github.com/Tyler-Keith-Thompson/BenchmarkHarness && swift build -c release --package-path BenchmarkHarness/Harness --product benchmark-harness
 ```
 
-Counts depend on the processor architecture, the Swift toolchain and the Valgrind build, so compare
-baselines recorded on the same kind of machine. On aarch64 with the virtual machine's Swift image,
-instruction counts match the virtual machine's; cache misses and mispredicted branches differ by
-up to a few percent on small counts, and allocation counts by a few. Recording both baselines of a
-comparison on the same host avoids depending on any of that.
+Either way the tool is `BenchmarkHarness/Harness/.build/release/benchmark-harness`. Put it on your
+`PATH`, or call it by that path.
 
-### The library
+## Record and compare
 
-The modules that read Callgrind's dumps and write ordo-one's baselines are a library. Every example
-here is a test in `Tests/BenchmarkHarnessTests`, so it cannot drift from the code.
+From the package that holds your benchmarks, record a baseline, make your change, record another,
+and compare them with ordo-one's own command:
 
-```swift
-import BenchmarkHarness
-
-let iterations = [
-    CallgrindDump(text: "events: Ir I1mr D1mr D1mw ILmr DLmr DLmw Bcm Bim\ntotals: 4100 2 9 3 0 1 0 12\n"),
-    CallgrindDump(text: "events: Ir I1mr D1mr D1mw ILmr DLmr DLmw Bcm Bim\ntotals: 4100 0 8 3 0 0 0 12\n"),
-]
-let overhead = [
-    CallgrindDump(text: "events: Ir I1mr D1mr D1mw ILmr DLmr DLmw Bcm Bim\ntotals: 100\n"),
-]
-let results = SimulatedMetric.allCases.map { metric in
-    BenchmarkResult(metric: metric, iterations: iterations, overhead: overhead, warmupIterations: 1)
-}
-let baseline = BenchmarkBaseline(
-    baselineName: "main",
-    machine: BenchmarkMachine(hostname: "guest", processors: 8, processorType: "aarch64",
-                              memory: 8, kernelVersion: "6.12.28"),
-    results: [BenchmarkIdentifier(target: "SortBenchmarks", name: "Sort 1000"): results]
-)
-let json = try JSONEncoder().encode(baseline)
-print(BenchmarkBaseline.relativePath(target: "SortBenchmarks", baselineName: "main"))
-// .benchmarkBaselines/SortBenchmarks/main/results.json
+```sh
+benchmark-harness baseline update before
+# … change the code …
+benchmark-harness baseline update after
+swift package benchmark baseline compare before after
 ```
 
-### Metrics
+Add `--package-path <directory>` to point at the benchmarks package from elsewhere, and
+`--target`, `--filter` or `--skip` to run fewer benchmarks, as with `swift package benchmark`.
+Baselines are written to `.benchmarkBaselines/`, where `swift package benchmark baseline check`
+reads them too.
+
+Each baseline records:
 
 | Metric | Counts |
 |---|---|
-| Instructions | Instructions executed (Callgrind's `Ir`) |
+| Instructions | Instructions executed |
 | L1 Miss Sum | Level-1 instruction and data cache misses, on a 32 KiB 8-way cache with 64-byte lines |
 | Last-level Miss Sum | Last-level cache misses, on an 8 MiB 16-way cache |
 | Mispredicted Branch | Mispredicted conditional and indirect branches |
-| Cycle Estimation | `Ir + 10 × (L1 misses + mispredicted branches) + 100 × last-level misses` |
+| Cycle Estimation | `Instructions + 10 × (L1 misses + mispredicted branches) + 100 × last-level misses` |
 
-Each metric is counted inside ordo-one's own measurement window, from the counter reset before an
-iteration to the counter read after it, less the median cost of an empty window. An empty
-benchmark still measures a few hundred instructions, ordo-one's own per-iteration bookkeeping,
-which is the same in every run and so cancels out of a comparison.
+It also records each benchmark's allocation, retain and release counts and custom metrics, as
+`swift package benchmark` would. Compare baselines recorded on the same kind of machine: counts
+depend on the processor architecture and the Swift toolchain.
 
-The value recorded is the median over the measured iterations. The simulated caches and branch
-predictor start cold at the first measured iteration and stay warm after it, so with three
-iterations the median is a warm one.
+## In CI
 
-A benchmark's own metrics that don't depend on time are recorded beside these: allocation, free
-and leak counts (`mallocCountTotal`, `memoryLeaked`, …), Swift object, retain and release counts
-(`objectAllocCount`, `retainCount`, …) and custom metrics. They are measured in a second run of
-the benchmark, without Valgrind, over the same number of iterations, so `baseline compare` and
-`check` see them as `swift package benchmark` records them. Time, memory and system-call metrics
-are left out.
+On a GitHub Actions Linux runner, record the pull request's counts and compare them with a
+baseline committed from `main`:
+
+```yaml
+jobs:
+  benchmarks:
+    runs-on: ubuntu-26.04-arm
+    container: swift:6.3
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install benchmark-harness
+        run: |
+          git clone --depth 1 https://github.com/Tyler-Keith-Thompson/BenchmarkHarness /tmp/BenchmarkHarness
+          swift build -c release --package-path /tmp/BenchmarkHarness/Harness --product benchmark-harness
+      - name: Record and compare
+        run: |
+          /tmp/BenchmarkHarness/Harness/.build/release/benchmark-harness baseline update pull-request
+          swift package benchmark baseline compare main pull-request
+```
+
+Commit the `main` baseline by running `benchmark-harness baseline update main` on the same kind
+of machine and committing `.benchmarkBaselines/`.
+
+## Troubleshooting
+
+**The first run takes several minutes.** It downloads Valgrind (and on macOS a Linux kernel and
+Swift image) and builds Valgrind, once. Later runs reuse the cache in
+`~/Library/Caches/BenchmarkHarness` on macOS and `~/.cache/BenchmarkHarness` on Linux. On Linux,
+building Valgrind needs `make`, `gcc`, the C library headers, `bzip2` and `patch`; run as root
+with `apt-get`, as in a `swift` container, the tool installs them itself.
+
+**`Waiting for another run on … (process N)`.** Another run on the same checkout is using its
+build products; this one starts when process N finishes. Stop that process to start now.
+
+**Measuring is slow.** Simulation runs roughly fifty times slower than native code, so the tool
+measures three iterations of each benchmark (`--iterations`) and runs several benchmarks at once
+(`--jobs`). Narrow a run with `--target` or `--filter` while iterating.
+
+**On macOS, the virtual machine won't start.** The tool must be signed with
+`harness.entitlements`, as in the install command above; rebuilding it removes the signature.
+
+## How it works
+
+[docs/HowItWorks.md](docs/HowItWorks.md) explains the measurement windows, the virtual machine,
+the Valgrind build and why two runs agree. The modules that read Callgrind's dumps and write
+ordo-one's baselines are also a library: [docs/Library.md](docs/Library.md), with the
+[API reference](https://tyler-keith-thompson.github.io/BenchmarkHarness/documentation/).
 
 ## Development
 
@@ -163,7 +124,8 @@ Bazel is the development build; SwiftPM is the published package. Both are gener
 | `just bench` | The benchmarks (`Benchmarks/README.md`) |
 | `just bench-simulated` | The benchmarks' simulated counts, as the `simulated` baseline |
 | `just bench-simulated-compare` | Simulated counts now, compared against `simulated` |
-| `just harness-test` | The host tool's tests |
+| `just harness` | Build and sign the tool |
+| `just harness-test` | The tool's tests |
 | `just generate` | An Xcode project from the Bazel graph |
 
 `AGENTS.md` describes the layout, the workflow and the house rules in full.

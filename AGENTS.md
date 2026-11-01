@@ -17,7 +17,7 @@ every project built; delete a rule only when it cannot apply here, and say so in
 Sources/<Module>/                One directory per module, each with a generated BUILD.bazel
 Sources/BenchmarkHarness/             Umbrella module (@_exported imports) and the landing DocC catalog
 Tests/<Module>Tests/             One test target per module; Performance/ holds speed-reliant tests
-Tests/BenchmarkHarnessTests/          The README examples, verbatim
+Tests/BenchmarkHarnessTests/          The Swift examples in README.md and docs/Library.md, verbatim
 Tests/BenchmarkHarnessTestSupport/    Shared test fixtures (data only)
 scripts/modules.py               The module graph
 tools/                           Bazel rule wrappers (warnings as errors, Swift 6 mode), DocC rules
@@ -209,7 +209,7 @@ produced together.
   fine.
 - Doc comments: a one-line summary, then parameters, return value, complexity, and what traps or
   throws.
-- The README's examples are tests (`Tests/BenchmarkHarnessTests`).
+- The Swift examples in `README.md` and `docs/Library.md` are tests (`Tests/BenchmarkHarnessTests`).
 
 ### Git (*default*)
 

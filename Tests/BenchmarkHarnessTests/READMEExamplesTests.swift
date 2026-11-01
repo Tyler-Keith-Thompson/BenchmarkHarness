@@ -1,4 +1,4 @@
-// The README's examples, verbatim, so the README cannot drift from the code.
+// The Swift examples in docs/Library.md, verbatim, so they cannot drift from the code.
 
 import BenchmarkHarness
 import Foundation
