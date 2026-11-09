@@ -25,8 +25,9 @@ public actor GuestMachine: Machine {
         }
     }
 
-    /// The image every guest runs: Swift 6.3 on Ubuntu 24.04, pinned by digest.
-    public static let image = "docker.io/library/swift@sha256:1038d54c80063f5cdfabc4560990c30af64b5de8ebf28161deb22ca4ad5db866"
+    /// The image every guest runs: Swift 6.4.2 on Ubuntu 24.04 (`swift:6.4.2-noble`), pinned by digest. It builds
+    /// packages on any tools version up to 6.4.
+    public static let image = "docker.io/library/swift@sha256:bca121f6eb59fd80340d1296887b2698ed8f3eb9eca7d80c181f8af769dc7ee0"
     /// Containerization's init filesystem, matching the framework's version.
     public static let initImage = "ghcr.io/apple/containerization/vminit:0.54.0"
     /// The guest loopback port the proxy bridge listens on.
