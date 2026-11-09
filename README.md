@@ -102,6 +102,16 @@ build products; this one starts when process N finishes. Stop that process to st
 measures three iterations of each benchmark (`--iterations`) and runs several benchmarks at once
 (`--jobs`). Narrow a run with `--target` or `--filter` while iterating.
 
+**Async benchmarks differ from a baseline an older version of the tool recorded.** The tool runs
+Swift concurrency's jobs one at a time on a single queue, so an async benchmark counts the work of
+every task it awaits, the same in every run; older versions counted only part of it, differently
+each run. Re-record every `simulated` baseline that has async benchmarks. Synchronous benchmarks
+count what they did.
+
+**An async benchmark never finishes.** One of its jobs waits for another by spinning or on a
+condition variable. Jobs run one at a time here, so the other never runs; wait with `await`, or a
+`DispatchSemaphore`, instead.
+
 **On macOS, the virtual machine won't start.** The tool must be signed with
 `harness.entitlements`, as in the install command above; rebuilding it removes the signature.
 

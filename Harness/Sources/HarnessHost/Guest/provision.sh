@@ -54,5 +54,5 @@ if [ ! -x "$prefix/valgrind/bin/valgrind" ]; then
     mv -T "$staging/valgrind" "$prefix/valgrind" 2>/dev/null || true
     rm -rf "$staging"
 fi
-clang -O2 -shared -fPIC -I"$prefix/valgrind/include" -o "$prefix/perfshim.so.$$" "$files/perfshim.c" -ldl
+clang -O2 -shared -fPIC -I"$prefix/valgrind/include" -o "$prefix/perfshim.so.$$" "$files/perfshim.c" "$files/executor.c" -ldl -lpthread
 mv -f "$prefix/perfshim.so.$$" "$prefix/perfshim.so"

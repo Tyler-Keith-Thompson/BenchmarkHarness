@@ -18,6 +18,11 @@
 // itself. Each window is dumped as "iteration" or "calibration". Reads return zero, so
 // ordo-one/benchmark records no instruction counts of its own.
 //
+// A window opens by zeroing the costs and closes by dumping them, both for the whole program, so
+// it counts every thread that collected inside it, whichever threads open and close it.
+// executor.c decides which threads collect while it is open: the one running Swift jobs, one at
+// a time, and the main thread while it runs a main-actor job (run-benchmarks.sh).
+//
 // The counts don't depend on time, so a benchmark needs only a few iterations, and how many it
 // runs must not depend on how busy the machine is. ordo-one/benchmark's runner keeps each
 // benchmark's own wall-clock limit, measured on CLOCK_BOOTTIME, so the shim takes that clock
@@ -42,6 +47,10 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 #include <valgrind/callgrind.h>
+
+// executor.c: which threads collect, and resynchronizing after instrumentation resets them.
+void executor_window(int open);
+void executor_instrumentation_changed(void);
 
 #define MAX_COUNTERS 1024
 
@@ -126,6 +135,7 @@ int ioctl(int fd, unsigned long request, ...) {
                 if (!instrumented) {
                     instrumented = 1;
                     CALLGRIND_START_INSTRUMENTATION;
+                    executor_instrumentation_changed();
                 }
             } else if (request == PERF_EVENT_IOC_DISABLE) {
                 calibrating = 0;
@@ -133,14 +143,14 @@ int ioctl(int fd, unsigned long request, ...) {
                 if (instrumented && iterations_measured > 0) {
                     instrumented = 0;
                     CALLGRIND_STOP_INSTRUMENTATION;
+                    executor_instrumentation_changed();
                 }
             } else if (request == PERF_EVENT_IOC_RESET && previous_request != PERF_EVENT_IOC_ENABLE) {
                 if (window_open) {
                     // startMeasurement() inside the closure: what ran since the window opened is
-                    // setup, not measurement.
-                    CALLGRIND_TOGGLE_COLLECT;
+                    // setup, not measurement. The window that opens at the next read zeroes it.
+                    executor_window(0);
                     window_open = 0;
-                    CALLGRIND_ZERO_STATS;
                 }
                 calibrating = 0;
                 iteration_armed = 1;
@@ -158,7 +168,7 @@ ssize_t read(int fd, void *buffer, size_t count) {
     if (is_counter(fd)) {
         if (is_first_counter(fd)) {
             if (window_open) {
-                CALLGRIND_TOGGLE_COLLECT;
+                executor_window(0);
                 window_open = 0;
                 CALLGRIND_DUMP_STATS_AT(window_name);
                 if (window_name[0] == 'i') count_iteration();
@@ -166,7 +176,8 @@ ssize_t read(int fd, void *buffer, size_t count) {
                 window_name = iteration_armed ? "iteration" : "calibration";
                 iteration_armed = 0;
                 window_open = 1;
-                CALLGRIND_TOGGLE_COLLECT;
+                CALLGRIND_ZERO_STATS;
+                executor_window(1);
             }
         }
         memset(buffer, 0, count);

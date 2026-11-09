@@ -28,6 +28,11 @@ scan of a thousand patterns at every offset of a 10⁵-byte text, about 1.3 bill
 taken through tight loops in a single call. Under Callgrind it must finish in a few minutes rather
 than grow Valgrind's memory until the guest kills it.
 
+`Benchmarks/ThreadBenchmarks/` is another fixture: a thousand and ten thousand calls on a detached
+task, a thousand on an actor between hops and a thousand on the main actor. Their counts must grow
+with the number of calls, since the work runs on another thread than the measurement's, and every
+sample but the main actor's must repeat exactly between recordings.
+
 `just bench-simulated` counts instructions, cache misses and mispredicted branches under Callgrind
 instead of timing, so its baselines don't move when the machine is busy. Compare against one as
 against any other: `swift package benchmark baseline compare main`.

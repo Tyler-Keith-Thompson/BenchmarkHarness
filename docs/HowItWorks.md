@@ -18,6 +18,27 @@ benchmark that calls `startMeasurement()` and `stopMeasurement()` is counted bet
 An empty benchmark still measures a few hundred instructions, ordo-one's own per-iteration
 bookkeeping, which is the same in every run and so cancels out of a comparison.
 
+## Async benchmarks
+
+Swift's global executor on Linux runs jobs on libdispatch's worker threads, and under Callgrind
+which of them runs next depends on when the kernel wakes it, so the same async benchmark would
+take different paths from run to run. A second preloaded file
+(`Harness/Sources/HarnessHost/Guest/executor.c`) replaces that executor while a benchmark runs:
+every job the runtime would hand to its global queues joins one queue, and its threads take
+turns, one job at a time, in the order they were enqueued. A thread that blocks on a semaphore
+hands its turn on, and a new thread starts when none is idle. Each thread counts only while it
+holds the turn and a window is open, so a window counts the work of every task it awaits,
+whichever thread runs it, and nothing of what other threads do meanwhile. Main-actor jobs still
+run on the main thread, and are counted there.
+
+An async benchmark therefore counts the same instructions in every run, as a synchronous one
+does. The exceptions:
+
+- Work submitted to dispatch queues or threads directly isn't counted.
+- Main-actor jobs vary by a few hundred instructions, from the handoff to the main thread.
+- A job that waits for another job by spinning or on a condition variable never finishes, since
+  that job can't run until it does. A semaphore wait (`DispatchSemaphore`) is fine.
+
 ## Keeping simulation affordable
 
 A measured iteration runs roughly fifty times slower under Callgrind than natively. The tool keeps

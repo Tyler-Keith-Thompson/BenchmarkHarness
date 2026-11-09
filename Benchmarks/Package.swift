@@ -35,6 +35,12 @@ let package = Package(
             plugins: [.plugin(name: "BenchmarkPlugin", package: "benchmark")]
         ),
         .executableTarget(
+            name: "ThreadBenchmarks",
+            dependencies: [.product(name: "Benchmark", package: "benchmark")],
+            path: "Benchmarks/ThreadBenchmarks",
+            plugins: [.plugin(name: "BenchmarkPlugin", package: "benchmark")]
+        ),
+        .executableTarget(
             name: "SimulatedMetricsBenchmarks",
             dependencies: [
                 .product(name: "Benchmark", package: "benchmark"),

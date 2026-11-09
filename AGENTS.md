@@ -32,7 +32,8 @@ scripts on the host. `just harness` builds and signs it (the virtualization enti
 `just harness-test` runs its tests; check Linux changes in the guest's Swift image (`docker run`
 of `GuestMachine.image`). `Harness/Sources/HarnessHost/Guest/` holds what runs inside the
 VM: the provisioning and run scripts, `perfshim.c` (fakes ordo-one's Linux perf counter so its
-measurement window drives Callgrind), and a local Valgrind patch recorded in `Harness/NOTES.md`.
+measurement window drives Callgrind), `executor.c` (runs Swift concurrency's jobs one at a time,
+so async benchmarks count the same in every run), and a local Valgrind patch recorded in `Harness/NOTES.md`.
 Private API is allowed in `Harness/`.
 
 ### Module graph

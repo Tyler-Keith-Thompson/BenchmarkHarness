@@ -39,7 +39,7 @@ exec "$prefix/valgrind/bin/valgrind" \
     --tool=callgrind \
     --cache-sim=yes --branch-sim=yes \
     --I1=32768,8,64 --D1=32768,8,64 --LL=8388608,16,64 \
-    --collect-atstart=no --instr-atstart=no \
+    --collect-atstart=no --instr-atstart=no --toggle-collect='__swift_run_job(*' \
     --callgrind-out-file="$dumps/callgrind.out" \
     --log-file="$dumps/valgrind.log" \
     "$executable" --input-fd 0 --output-fd 3 --quiet true
