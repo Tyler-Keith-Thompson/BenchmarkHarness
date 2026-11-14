@@ -5,10 +5,10 @@ counts come from simulated hardware rather than a clock.
 
 ## Overview
 
-``Callgrind`` parses the event totals of each dump Callgrind writes. ``SimulatedMetrics`` derives
+``/Callgrind`` parses the event totals of each dump Callgrind writes. ``/SimulatedMetrics`` derives
 instruction, cache-miss, branch-misprediction and cycle-estimate metrics from those totals, less the
-cost of measuring. ``BenchmarkBaselines`` encodes the results in the format
-`swift package benchmark baseline compare` reads, and ``BenchmarkCommands`` speaks the protocol
+cost of measuring. ``/BenchmarkBaselines`` encodes the results in the format
+`swift package benchmark baseline compare` reads, and ``/BenchmarkCommands`` speaks the protocol
 ordo-one/benchmark's runner uses to list and run a benchmark executable's benchmarks. Every public
 type is a value type; plain spellings trap on bad input and `checked:` spellings throw.
 
@@ -32,7 +32,7 @@ print(result.statistics.valueAtPercentile(50))  // 4000
 
 ### Modules
 
-- ``Callgrind``
-- ``SimulatedMetrics``
-- ``BenchmarkBaselines``
-- ``BenchmarkCommands``
+- ``/Callgrind``
+- ``/SimulatedMetrics``
+- ``/BenchmarkBaselines``
+- ``/BenchmarkCommands``

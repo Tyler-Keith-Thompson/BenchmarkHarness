@@ -1,7 +1,7 @@
 /// The measurements of one metric of one benchmark, as ordo-one/benchmark stores them in a baseline.
 ///
 /// Results encode as ordo-one/benchmark's `BenchmarkResult`, and results it encoded, such as those
-/// in a ``BenchmarkCommandReply/result(benchmark:results:)`` reply, decode to their metric,
+/// in a `BenchmarkCommandReply.result(benchmark:results:)` reply, decode to their metric,
 /// scaling factor, warmup and statistics; tags and thresholds are not kept.
 @frozen
 public struct BenchmarkResult: Equatable, Sendable, Codable {

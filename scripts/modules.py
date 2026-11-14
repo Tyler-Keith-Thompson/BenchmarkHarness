@@ -13,12 +13,16 @@ catch-all modules ("Core", "Utilities").
 
 import os
 
-# The package, umbrella module and test-support module take the project's name.
+# The package, umbrella module and test-support module take the project's name. A package whose
+# main module takes the project's name (`import BenchmarkHarness` is that module, not an umbrella) lists
+# it in MODULES like any other, and then has no umbrella.
 PROJECT = "BenchmarkHarness"
 TEST_SUPPORT = f"{PROJECT}TestSupport"
 
 # External packages: (identity, url, minimum version). A dependency written "identity/Product"
-# in the tables below refers to a product of one of these. After adding one: `just modules`,
+# in the tables below refers to a product of one of these. A version written "exact:1.2.3" pins
+# that release, for a package whose later releases resolve differently on different toolchains
+# (Bazel resolves on each machine with its own swift). After adding one: `just modules`,
 # add `swiftpkg_<identity>` (hyphens as underscores) to use_repo in MODULE.bazel, `just resolve`.
 PACKAGES = [
     # Tests only: property checks with shrinking, for Swift Testing.
@@ -29,6 +33,12 @@ PACKAGES = [
     # MOCKING below.
     # ("mockable", "https://github.com/Kolos65/Mockable", "0.6.4"),
 ]
+
+# Packages that only Apple platforms build (Objective-C, or wrappers of Apple frameworks), by
+# identity. SwiftPM links their products on Apple platforms only and Bazel on macOS only (a
+# `select`), so the same targets still build on Linux, where the code using them is left out by
+# `#if canImport`. //:package_swift_test leaves their products out of its comparison.
+APPLE_ONLY_PACKAGES = []
 
 # The product whose macro generates mocks. A module that depends on it is compiled with the
 # MOCKING condition in debug builds only (SwiftPM's debug configuration, Bazel's
@@ -90,6 +100,20 @@ PERFORMANCE_TEST_SIZE = "medium"
 # The tag .bazelrc's release config filters out of builds and tests (see PERFORMANCE_TESTS).
 RELEASE_EXCLUDED_TAG = "debug-only"
 
+# The Benchmarks/ package's targets: (name, library modules it imports). Both its Package.swift and
+# its BUILD.bazel are written from this list. Each target is an ordo-one/benchmark executable in
+# Benchmarks/Benchmarks/<name>; its Bazel target (tools/benchmarks.bzl) caches its simulated counts,
+# so `just bench-simulated` measures again only the targets whose modules or sources changed.
+BENCHMARKS = [
+    ("CallgrindBenchmarks", ["Callgrind"]),
+    # Fixtures for benchmark-harness itself rather than benchmarks of a module (Benchmarks/README.md).
+    ("LongIterationBenchmarks", []),
+    ("MeasurementWindowBenchmarks", []),
+    ("ThreadBenchmarks", []),
+    ("SimulatedMetricsBenchmarks", ["Callgrind", "BenchmarkBaselines", "SimulatedMetrics"]),
+]
+BENCHMARK_PACKAGE = ("https://github.com/ordo-one/benchmark", "1.27.0")
+
 # Keep in step with .bazelrc's --macos_minimum_os.
 PLATFORMS = '[.macOS(.v15), .iOS(.v18), .tvOS(.v18), .watchOS(.v11), .visionOS(.v2)]'
 MACOS_MINIMUM = "15.0"
@@ -105,7 +129,6 @@ def performance_target(name):
 def check():
     names = [m[0] for m in MODULES]
     assert len(names) == len(set(names)), "duplicate module"
-    assert PROJECT not in names, f"{PROJECT} is the umbrella; it is not listed in MODULES"
     packages = [p[0] for p in PACKAGES]
     for name, deps in [(m[0], m[3]) for m in MODULES] + [(e[0], e[2]) for e in EXECUTABLES]:
         for d in deps:
@@ -125,13 +148,51 @@ def check():
                 assert d in names + [PROJECT, TEST_SUPPORT], f"{name} depends on unknown {d}"
     for name in PERFORMANCE_TESTS:
         assert name in tests, f"PERFORMANCE_TESTS names unknown test target {name}"
+    for name, deps in BENCHMARKS:
+        for d in deps:
+            assert d in names or (d == PROJECT and umbrella()), f"benchmark {name} imports unknown module {d}"
 
 
 def spm_dep(d):
     if "/" in d:
         package, product = d.split("/")
-        return f'.product(name: "{product}", package: "{package}")'
+        condition = ", condition: .when(platforms: applePlatforms)" if package in APPLE_ONLY_PACKAGES else ""
+        return f'.product(name: "{product}", package: "{package}"{condition})'
     return f'"{d}"'
+
+
+def requirement(version):
+    """A package's version requirement in a manifest: `from:` the minimum, or `exact:` a pinned release."""
+    if version.startswith("exact:"):
+        return f'exact: "{version.removeprefix("exact:")}"'
+    return f'from: "{version}"'
+
+
+def umbrella():
+    """Whether the package has a generated umbrella module: unless MODULES lists the project's name."""
+    return PROJECT not in [m[0] for m in MODULES]
+
+
+def apple_only(d):
+    return "/" in d and d.split("/")[0] in APPLE_ONLY_PACKAGES
+
+
+def bazel_deps(deps):
+    """A `deps` attribute, or nothing when there are none; Apple-only products sit in a macOS `select`."""
+    if not deps:
+        return ""
+    listed = "".join(f'        "{bazel_label(d)}",\n' for d in deps if not apple_only(d))
+    text = f"    deps = [\n{listed}    ]"
+    apple = "".join(f'            "{bazel_label(d)}",\n' for d in deps if apple_only(d))
+    if apple:
+        text += (
+            " + select({\n"
+            "        # Apple-only packages (APPLE_ONLY_PACKAGES in scripts/modules.py).\n"
+            f'        "@platforms//os:macos": [\n{apple}        ],\n'
+            '        "//conditions:default": [],\n'
+            "    })"
+        )
+    return text + ",\n"
 
 
 def bazel_label(d):
@@ -170,15 +231,24 @@ def package_swift():
         "// Every target directory holds a BUILD.bazel, which SwiftPM must be told to ignore.",
         'let bazelFiles = ["BUILD.bazel"]',
         "",
+    ]
+    if APPLE_ONLY_PACKAGES:
+        lines += [
+            "// Where the Apple-only packages' products are linked (APPLE_ONLY_PACKAGES in scripts/modules.py).",
+            "let applePlatforms: [Platform] = [.macOS, .macCatalyst, .iOS, .tvOS, .watchOS, .visionOS]",
+            "",
+        ]
+    lines += [
         "// Typed arrays of their own: as one `Package(...)` expression, a large manifest is too big for",
         "// the type checker.",
         "let products: [Product] = [",
-        f'    .library(name: "{PROJECT}", targets: ["{PROJECT}"]),',
     ]
+    if umbrella():
+        lines.append(f'    .library(name: "{PROJECT}", targets: ["{PROJECT}"]),')
     lines += [f'    .library(name: "{m[0]}", targets: ["{m[0]}"]),' for m in MODULES]
     lines += [f'    .executable(name: "{e[0]}", targets: ["{e[0]}"]),' for e in EXECUTABLES]
     lines += ["]", "", "let dependencies: [Package.Dependency] = ["]
-    lines += [f'    .package(url: "{url}", from: "{version}"),' for _, url, version in PACKAGES]
+    lines += [f'    .package(url: "{url}", {requirement(version)}),' for _, url, version in PACKAGES]
     lines += ["]", "", "let targets: [Target] = ["]
     group = None
     for name, g, _, deps in MODULES:
@@ -200,10 +270,13 @@ def package_swift():
     all_deps = ", ".join(f'"{m[0]}"' for m in MODULES)
     support_deps = ", ".join(spm_dep(d) for d in TEST_SUPPORT_DEPENDENCIES)
     support_deps_arg = f"dependencies: [{support_deps}], " if TEST_SUPPORT_DEPENDENCIES else ""
+    if umbrella():
+        lines += [
+            "",
+            f"    // Umbrella: `import {PROJECT}` imports every module.",
+            f'    .target(name: "{PROJECT}", dependencies: [{all_deps}], exclude: bazelFiles),',
+        ]
     lines += [
-        "",
-        f"    // Umbrella: `import {PROJECT}` imports every module.",
-        f'    .target(name: "{PROJECT}", dependencies: [{all_deps}], exclude: bazelFiles),',
         "",
         "    // Shared fixtures (data only) for every test target.",
         f'    .target(name: "{TEST_SUPPORT}", {support_deps_arg}path: "Tests/{TEST_SUPPORT}", exclude: bazelFiles),',
@@ -240,7 +313,7 @@ def package_swift():
 
 
 def dependency_manifest():
-    deps = "".join(f'        .package(url: "{url}", from: "{version}"),\n' for _, url, version in PACKAGES)
+    deps = "".join(f'        .package(url: "{url}", {requirement(version)}),\n' for _, url, version in PACKAGES)
     return (
         "// swift-tools-version: 6.0\n"
         "import PackageDescription\n\n"
@@ -256,8 +329,7 @@ def dependency_manifest():
 
 
 def build_bazel(name, description, deps):
-    dl = "".join(f'        "{bazel_label(d)}",\n' for d in deps)
-    deps_attr = f"    deps = [\n{dl}    ],\n" if deps else ""
+    deps_attr = bazel_deps(deps)
     defines_attr = (
         "    # Mock<Protocol> types from @Mockable, in debug builds only (MOCKING in scripts/modules.py).\n"
         '    defines = select({"//tools:debug": ["MOCKING"], "//conditions:default": []}),\n'
@@ -290,8 +362,7 @@ def build_bazel(name, description, deps):
 
 
 def executable_build_bazel(name, description, deps):
-    dl = "".join(f'        "{bazel_label(d)}",\n' for d in deps)
-    deps_attr = f"    deps = [\n{dl}    ],\n" if deps else ""
+    deps_attr = bazel_deps(deps)
     return (
         "# GENERATED by scripts/modules.py — edit EXECUTABLES there, then run `just modules`.\n\n"
         'load("//tools:swift_rules.bzl", "swift_binary")\n\n'
@@ -307,8 +378,7 @@ def executable_build_bazel(name, description, deps):
 
 
 def test_support_build_bazel():
-    dl = "".join(f'        "{bazel_label(d)}",\n' for d in TEST_SUPPORT_DEPENDENCIES)
-    deps_attr = f"    deps = [\n{dl}    ],\n" if TEST_SUPPORT_DEPENDENCIES else ""
+    deps_attr = bazel_deps(TEST_SUPPORT_DEPENDENCIES)
     return (
         "# GENERATED by scripts/modules.py — edit TEST_SUPPORT_DEPENDENCIES there, then run `just modules`.\n\n"
         'load("//tools:swift_rules.bzl", "swift_library")\n\n'
@@ -326,7 +396,6 @@ def test_support_build_bazel():
 
 def test_targets_bazel(name, deps, size, srcs, tags):
     """One test module: its library, the swift_test that `bazel test` runs, and the Xcode bundle."""
-    dl = "".join(f'        "{bazel_label(d)}",\n' for d in deps)
     tags_attr = f"    tags = {tags},\n".replace("'", '"') if tags else ""
     return (
         "swift_library(\n"
@@ -340,7 +409,7 @@ def test_targets_bazel(name, deps, size, srcs, tags):
         f"{tags_attr}"
         "    # Read by //:package_swift_test, which checks Package.swift against the Bazel graph.\n"
         '    visibility = ["//:__pkg__"],\n'
-        f"    deps = [\n{dl}    ],\n"
+        f"{bazel_deps(deps)}"
         ")\n\n"
         "# `bazel test` / `just test`: a standalone executable, fast to start and run in Bazel's sandbox.\n"
         "swift_test(\n"
@@ -410,6 +479,86 @@ def executables_bzl():
     )
 
 
+def library_directories():
+    """Every non-test target directory the root Package.swift declares."""
+    directories = [f"Sources/{m[0]}" for m in MODULES] + [f"Sources/{e[0]}" for e in EXECUTABLES]
+    if umbrella():
+        directories.append(f"Sources/{PROJECT}")
+    return sorted(directories + [f"Tests/{TEST_SUPPORT}"])
+
+
+def benchmarks_package_swift():
+    url, version = BENCHMARK_PACKAGE
+    targets = "".join(
+        "        .executableTarget(\n"
+        f'            name: "{name}",\n'
+        "            dependencies: [\n"
+        '                .product(name: "Benchmark", package: "benchmark"),\n'
+        + "".join(f'                .product(name: "{d}", package: "{PROJECT}"),\n' for d in deps)
+        + "            ],\n"
+        f'            path: "Benchmarks/{name}",\n'
+        '            plugins: [.plugin(name: "BenchmarkPlugin", package: "benchmark")]\n'
+        "        ),\n"
+        for name, deps in BENCHMARKS
+    )
+    return (
+        "// swift-tools-version: 6.3\n"
+        "import PackageDescription\n\n"
+        "// GENERATED by scripts/modules.py from BENCHMARKS: edit the table there, then run `just modules`.\n"
+        "// Benchmarks live in their own package so the library and its tests never depend on the\n"
+        "// benchmark framework. Run them with `just bench`; see Benchmarks/README.md.\n\n"
+        "let package = Package(\n"
+        f'    name: "{PROJECT}Benchmarks",\n'
+        "    platforms: [.macOS(.v15)],\n"
+        "    dependencies: [\n"
+        "        // Named, so the identity does not depend on the checkout directory's name.\n"
+        f'        .package(name: "{PROJECT}", path: ".."),\n'
+        f'        .package(url: "{url}", from: "{version}"),\n'
+        "    ],\n"
+        f"    targets: [\n{targets}    ]\n"
+        ")\n"
+    )
+
+
+def benchmarks_build_bazel():
+    directories = "".join(f'    "{d}",\n' for d in library_directories())
+    benchmarks = "".join(f'    "{name}",\n' for name, _ in BENCHMARKS)
+    targets = "".join(
+        "\nsimulated_benchmark(\n"
+        f'    name = "{name}",\n'
+        f'    srcs = glob(["Benchmarks/{name}/**"]),\n'
+        "    modules = [\n"
+        + "".join(f'        "{bazel_label(d)}",\n' for d in deps)
+        + "    ],\n"
+        "    manifests = MANIFESTS,\n"
+        "    library_directories = LIBRARY_DIRECTORIES,\n"
+        "    benchmarks = BENCHMARKS,\n"
+        f'    project = "{PROJECT.lower()}",\n'
+        '    harness = ".harness/bin/benchmark-harness",\n'
+        "    # Empty until `just bench-simulated` copies the harness in; `bazel test //...` loads this anyway.\n"
+        '    harness_files = glob([".harness/bin/*.bundle/**"], allow_empty = True),\n'
+        '    stamp = ".harness/stamp",\n'
+        "    # `manual`: measuring starts a VM, so `bazel build //...` leaves these out.\n"
+        '    tags = ["manual"],\n'
+        ")\n"
+        for name, deps in BENCHMARKS
+    )
+    return (
+        "# GENERATED by scripts/modules.py from BENCHMARKS: edit the table there, then run `just modules`.\n"
+        "#\n"
+        "# Each benchmark target's simulated counts, as a cached Bazel output (tools/benchmarks.bzl).\n"
+        "# `just bench-simulated` writes .harness/ and builds these; nothing else should.\n\n"
+        'load("//tools:benchmarks.bzl", "simulated_benchmark")\n\n'
+        '# The root manifest, this package\'s manifest and its pins (which cover the whole graph).\n'
+        'MANIFESTS = [\n    "//:Package.swift",\n    "Package.swift",\n    "Package.resolved",\n]\n\n'
+        "# Every target directory SwiftPM needs to load the root manifest.\n"
+        f"LIBRARY_DIRECTORIES = [\n{directories}]\n\n"
+        "# Every benchmark target, each of which SwiftPM needs to load this package's manifest.\n"
+        f"BENCHMARKS = [\n{benchmarks}]\n"
+        + targets
+    )
+
+
 def write(path, text):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
@@ -441,12 +590,15 @@ def main():
     write(os.path.join(ROOT, "tools", "executables.bzl"), executables_bzl())
     write(os.path.join(ROOT, "tools", "performance_tests.bzl"), performance_tests_bzl())
     names = [m[0] for m in MODULES]
-    umbrella = os.path.join(ROOT, "Sources", PROJECT)
-    write(os.path.join(umbrella, "BUILD.bazel"), build_bazel(PROJECT, f"Umbrella: `import {PROJECT}` imports every module.", names))
-    write(os.path.join(umbrella, f"{PROJECT}.swift"),
-          f"// GENERATED by scripts/modules.py.\n//\n// Umbrella: `import {PROJECT}` imports every module.\n\n"
-          + "".join(f"@_exported import {n}\n" for n in names))
+    if umbrella():
+        directory = os.path.join(ROOT, "Sources", PROJECT)
+        write(os.path.join(directory, "BUILD.bazel"), build_bazel(PROJECT, f"Umbrella: `import {PROJECT}` imports every module.", names))
+        write(os.path.join(directory, f"{PROJECT}.swift"),
+              f"// GENERATED by scripts/modules.py.\n//\n// Umbrella: `import {PROJECT}` imports every module.\n\n"
+              + "".join(f"@_exported import {n}\n" for n in names))
     write(os.path.join(ROOT, "swift", "Package.swift"), dependency_manifest())
+    write(os.path.join(ROOT, "Benchmarks", "Package.swift"), benchmarks_package_swift())
+    write(os.path.join(ROOT, "Benchmarks", "BUILD.bazel"), benchmarks_build_bazel())
     # Written last: which files each target must exclude depends on the BUILD files above.
     write(os.path.join(ROOT, "Package.swift"), package_swift())
 

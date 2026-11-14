@@ -20,11 +20,13 @@ Tests/<Module>Tests/             One test target per module; Performance/ holds 
 Tests/BenchmarkHarnessTests/          The Swift examples in README.md and docs/Library.md, verbatim
 Tests/BenchmarkHarnessTestSupport/    Shared test fixtures (data only)
 scripts/modules.py               The module graph
-tools/                           Bazel rule wrappers (warnings as errors, Swift 6 mode), DocC rules
+tools/                           Bazel rule wrappers (warnings as errors, Swift 6 mode), DocC rules;
+                                 tools/bazel turns BuildBuddy on when the Keychain holds its key
 ```
 
-`Benchmarks/` is a separate SwiftPM package (ordo-one/benchmark) that Bazel ignores; see
-`Benchmarks/README.md`.
+`Benchmarks/` is a separate SwiftPM package (ordo-one/benchmark), generated from `BENCHMARKS` in
+`scripts/modules.py`. Bazel builds none of it; `Benchmarks/BUILD.bazel` only caches each target's
+simulated counts (`tools/benchmarks.bzl`). See `Benchmarks/README.md`.
 
 `Harness/` is another separate SwiftPM package that Bazel ignores: the host tool, built on
 apple/containerization on macOS 26 and without it on Linux, where `HostMachine` runs the same guest
@@ -54,6 +56,11 @@ the umbrella module and `swift/Package.swift` from it. Never edit the generated 
   module that declares the protocol and to its test target, add `swiftpkg_mockable` to
   `use_repo`, then `just modules` and `just resolve`. The generator defines `MOCKING` for that
   module in debug builds only, in both build systems.
+- A package whose main module takes the project's name (`import BenchmarkHarness` is the library
+  itself) lists it in `MODULES`; the generator then writes no umbrella.
+- A package only Apple platforms build (Objective-C, a wrapper of an Apple framework) goes in
+  `APPLE_ONLY_PACKAGES` too: its products are linked on Apple platforms only, so the targets still
+  build on Linux, and the code that uses them sits under `#if canImport(...)`.
 - A module name takes a `Module` suffix only when it would otherwise equal its main type's name
   (`GreetingModule` would hold `Greeting`). No catch-all modules ("Core", "Utilities").
 
@@ -72,8 +79,10 @@ Every shell command gets a timeout. macOS has no `timeout`; use
 | `just modules` | Regenerate build files from `scripts/modules.py` |
 | `just resolve` | Re-resolve Bazel's SwiftPM dependencies after editing `PACKAGES` |
 | `just bench [--target X]` | Benchmarks; `just bench-compare` against the `main` baseline |
+| `just bench-simulated-compare [--target X]` | Simulated counts (Callgrind in a Linux VM, from this repository's `Harness/`) against the committed `simulated` baseline; `just bench-simulated [--target X]` re-records it. Both measure only targets whose code changed |
 | `just docs` | Combined DocC site into `.build/docs` |
 | `just generate` | Xcode project from the Bazel graph |
+| `just buildbuddy-key`, `just ci-secrets` | Store the BuildBuddy key in the Keychain (once per Mac; builds then use the remote cache); set it as this repository's Actions secret with `gh` |
 | `just template-update` | Merge the project template's changes since `.template.json`'s commit; resolve conflicts, then `just modules`, `just test` |
 | `bazel query 'rdeps(//Tests/..., //Sources/X)'` | Test targets affected by a change to X |
 
@@ -85,7 +94,13 @@ Every shell command gets a timeout. macOS has no `timeout`; use
   or copies of the repo, and shut down any extra Bazel server you start.
 - Run suites through Bazel, not `swift test --filter`.
 - First-party warnings are errors (`tools/swift_rules.bzl`); dependencies build quietly. Fix the
-  warning, never suppress it.
+  warning, never suppress it. DocC's are too: `just docs` fails on a link that doesn't resolve.
+- CI's Bazel jobs run in `ghcr.io/tyler-keith-thompson/swift-bazel:<swift>-<bazel>`, Swift with
+  the Bazel in `.bazelversion` already in it, built by the project template's `ci-image/build.sh`.
+  Changing `.bazelversion` or the workflows' Swift version means a new tag from there.
+  The package is private; a repository pulls it once added under its Manage Actions access.
+- Exit tests (`#expect(processExitsWith:)`) go in files of their own, apart from the other tests:
+  builds for platforms that cannot start a child process leave those files out.
 
 ## Building blocks
 
@@ -96,6 +111,7 @@ third-party package for the same job. Add one as a row in `PACKAGES` (`scripts/m
 | Library | What it is | Use it for |
 |---|---|---|
 | [Grafluent](https://github.com/Tyler-Keith-Thompson/Grafluent) | A generic, high-performance graph library: copy-on-write representations (`AdjacencyList`, `CompressedSparseRow`, `AdjacencyMatrix`, pseudographs, stable graphs), graph classes with invariants (`DirectedAcyclicGraph`, `BipartiteGraph`, `Tree`) and algorithms (traversal, shortest paths, flows, matching, connectivity, isomorphism, layout) | Anything shaped like a graph or DAG: dependency orderings, scheduling, routing, state machines, reachability. Products are per module (`.product(name: "ShortestPaths", package: "Grafluent")`); the umbrella is `Grafluent`. |
+| [GrafluentCollections](https://github.com/Tyler-Keith-Thompson/GrafluentCollections) | Graph-shaped collections as copy-on-write values with the standard library's and swift-collections' API shape: balanced search trees (`AVLTree`/`AVLDictionary`, `RedBlackTree`, `Treap`, `SplayTree`) and `FenwickTree` so far; tries, suffix structures, decision diagrams, B-trees, segment, interval and spatial trees, ropes, persistent trees and an LRU cache planned. Tree- and graph-shaped ones convert to the matching Grafluent type | Sorted sets and dictionaries that take inserts and removals, prefix and range sums with updates; check its backlog before hand-writing a planned structure. Products are per module (`.product(name: "BinarySearchTrees", package: "GrafluentCollections")`); the umbrella is `GrafluentCollections`. |
 | [DependencyInjection](https://github.com/Tyler-Keith-Thompson/DependencyInjection) | Swift 6 dependency injection: `Factory` values on `Container`, `@Injected` / `@LazyInjected` / `@ConstructorInjected`, unique, cached and shared scopes, hierarchical containers, and `withTestContainer` so concurrent tests never share state | Any seam a test needs to replace (clocks, network, storage). Tests wrap their body in `withTestContainer { }` and register doubles there. Product `DependencyInjection`. |
 | [Afluent](https://github.com/Tyler-Keith-Thompson/Afluent) | Reactive operators over async/await: `DeferredTask` (a unit of work that yields one value) and `AsyncSequence` extensions with Combine's names (`map`, `flatMap`, `catch`, `retry`, `debounce`, `share`, …), plus `AfluentTesting` | Pipelines over async work where Combine would once have been used; a Combine replacement in new code. Products `Afluent` and, for test targets, `AfluentTesting`. |
 
@@ -111,7 +127,7 @@ have.
 
 1. **Code and docs.** The implementation, with doc comments per "Docs" below. A new module gets a
    row in `scripts/modules.py`, then `just modules`, the README's module table and the umbrella
-   DocC catalog's topic list.
+   DocC catalog's topic list (``` ``/Module`` ```: a link to another module needs the slash).
 2. **Tests** in `Tests/<Module>Tests`:
    - hand-worked cases;
    - edge cases: empty input, one element, the boundaries of every range;
@@ -120,10 +136,23 @@ have.
    - a property test against a naive reference (`swift-property-based`).
 3. **A README example**, if the feature changes how the package is introduced, copied verbatim
    into `Tests/BenchmarkHarnessTests`.
-4. **A benchmark** in `Benchmarks/Benchmarks/<Module>Benchmarks` where speed matters, starting
-   with a `BASELINE` entry: the hand-written form the code must keep pace with. Measure in
+4. **A benchmark** in `Benchmarks/Benchmarks/<Module>Benchmarks` (a row in `BENCHMARKS`, then
+   `just modules`) where speed matters, starting with a `BASELINE` entry: the hand-written form the code must keep pace with. Measure in
    release, and add a ratio test in `Tests/<Module>Tests/Performance/` where siblings have one.
    Use small inputs in debug builds, because the timing only runs in release.
+   Judge a speed change by `just bench-simulated-compare --target <Module>Benchmarks`: its
+   instruction, cache-miss and branch counts don't move when the machine is busy, as wall clock
+   does. Allocation counts and absolute times still come from `just bench`, on a quiet machine.
+   Re-record the `simulated` baseline for the targets a change touches
+   (`just bench-simulated --target X`) and commit it with the change. Its `results.json` is
+   pretty-printed with sorted keys, one benchmark's entry on lines of its own, and a benchmark
+   whose instruction and malloc counts moved less than compare's 5% threshold keeps its recorded
+   entry. So the file changes only where a benchmark did, and pull requests that change different
+   benchmarks of one target merge without a conflict. Resolve a conflict by re-recording after
+   the merge, never by hand. A benchmark whose mallocs drop to zero counts as moved. Harness
+   options (`--iterations`, `--filter`) measure uncached and write the same format, keeping the
+   entries that didn't move. To rewrite every entry (a change aimed at cache misses alone), delete
+   the file first.
 
 Watch for these:
 
@@ -181,10 +210,55 @@ produced together.
 - Names come from established libraries or the literature, familiar programmer terms first.
   Never invent names. No synonym typealiases; one name per concept. Spell names out.
 - Delete unused API rather than keeping it.
+- Small files, one main type each. Vocabulary a body needs goes in a `fileprivate` extension on
+  the type it describes (`extension User { fileprivate func matches(_ term: String) -> Bool }`),
+  so the body reads as a sentence.
 - No hooks or SPI added only for tests.
 - Underscored Swift features (`@_spi`, `_modify`, `@_effects`, `@_exported`) are fine where they
   help. Apple private API is not: undocumented framework symbols, private selectors, private
   frameworks, anything App Review rejects.
+
+### Seams and composition (*default*)
+
+How code that reaches past the process is split: networks, disks, clocks, other services. A pure
+library with none of that can skip this section.
+
+- **Layers with one job each.** A transport (HTTP, a file) knows nothing of the domain. A service
+  built on it speaks one API. Persistence and features build on services. A module depends only
+  on layers below it. Where two modules' models meet, an adapter in the module that imports both
+  translates between them, rather than one importing the other. A few lines duplicated across
+  modules cost less than coupling them; say so in a comment where it happens.
+- **A protocol at every seam.** Anything a test must replace is a protocol marked `@Mockable`.
+  Its production conformer is internal and takes the protocol's name with a leading underscore
+  (`_SearchService`), so autocomplete offers the protocol. Beside it, a `Factory` on `Container`
+  (DependencyInjection) returns it as the protocol, scoped on purpose: `.cached` for one instance
+  that holds state, `.shared` for one instance while anyone holds it, unique otherwise. Callers
+  resolve it with `@Injected`, `@LazyInjected` or `@ConstructorInjected`, never by naming the
+  conformer.
+- **The executable is the composition root.** Modules ship working defaults (an in-memory store);
+  the executable registers what production swaps in (the store on disk) at startup.
+- **Async work is a pipeline of values.** With Afluent, a call returns a lazy unit of work
+  (`DeferredTask`, `AsynchronousUnitOfWork`) built from operators: `flatMap` to the next step,
+  `tryMap` to validate, `decode`, `handleEvents` for side effects (caching, logging), `tryCatch`
+  for a fallback, `shareFromCache` so simultaneous identical requests make one call. Nothing runs
+  until `execute()`, so callers compose, retry and cancel it freely.
+- **Time is a dependency.** Code that waits, debounces or times out takes a clock registered on
+  `Container` (`AnyClock<Duration>`), never an inline `Task.sleep` or `ContinuousClock()`. Tests
+  register a `TestClock` (swift-clocks) and advance it.
+- **State is an enum of what can be true.** A screen, a response or a load is an enum with a case
+  per state (`prompt`, `loading`, `results([User])`, `noResults(String)`, `failed`), mapped once
+  from the outcome, not optionals and flags that can disagree.
+- **Isolation states its reason.** Mutable state reached from async callers lives in an actor, or
+  behind `Mutex` where the hops would cost too much; a comment says which and when to switch.
+- **Literals checked at compile time.** A literal URL is `#URL("…")` (the URL macro), not
+  `URL(string:)!`. A force unwrap or trap that remains has a comment proving it can't fire and
+  why a crash beats a thrown error no caller could handle.
+- **Logging.** A type that logs has one `private static let logger`: swift-log's
+  `Logger(label: "<module>.<Type>")`, or `os.Logger(subsystem:category:)` in Apple-only code, where
+  every interpolation of user data stays private. Levels mean something: `debug` for a path taken,
+  `info` for a notable event, `notice` for a degraded result (cached data served), `error` for a
+  failure. Cancellation is not a failure; don't log it as one. Logs are for developers; tests
+  don't pin them.
 
 ### Tests (*default*)
 
@@ -193,6 +267,19 @@ produced together.
   copied to another file still works. Shared fixture data in `BenchmarkHarnessTestSupport` is tolerated;
   shared assertions are not.
 - Test names state the rule they pin ("The checked spelling throws EmptyName for an empty name").
+- **Sociable.** A test runs the real code under test and its real collaborators wherever they are
+  fast and deterministic, and mocks only the seams that reach out (network, disk, clock) or that
+  it must steer. Inside `withTestContainer { }`, `Container.x.useProduction()` resolves the real
+  subject; its seams get mocks.
+- **Shape.** Arrange; then act on `sut`; then assert, with a blank line between. Name the values
+  `expected…` and `actual`. Where the call itself is the rule, `verify(mock)` pins it:
+  `.called(.once)`, or `.called(.never)` for one that must not happen.
+- **Deterministic concurrency.** Never sleep to let something happen. Order concurrent work with
+  gates the test opens (a stub that awaits a `SingleValueSubject` the test sends), advance a
+  `TestClock`, and run main-actor tests under `withMainSerialExecutor` (swift-concurrency-extras).
+  A suite that awaits carries `.timeLimit(.minutes(1))`, so a hang fails rather than stalls.
+- **Unhappy paths.** Every failure a seam can produce (a timeout, no network, a malformed
+  response, a missing resource) has a test of what the caller sees.
 - Tests may call underscored and `package` API.
 - Test doubles come from [Mockable](https://github.com/Kolos65/Mockable): mark the protocol at the
   seam `@Mockable` and use the generated `Mock<Protocol>` with `given`, `when` and `verify`
@@ -210,6 +297,10 @@ produced together.
   fine.
 - Doc comments: a one-line summary, then parameters, return value, complexity, and what traps or
   throws.
+- `//` comments say why, where the code makes a choice a reader would question: the data
+  structure, an actor over a `Mutex`, deliberate duplication, a force unwrap, the package rejected
+  and when it would become the right one. Doc comments describe the API; these record decisions. A
+  comment that restates the code is deleted.
 - The Swift examples in `README.md` and `docs/Library.md` are tests (`Tests/BenchmarkHarnessTests`).
 
 ### Git (*default*)
