@@ -3,6 +3,7 @@
 
 import BenchmarkHarnessTestSupport
 import Callgrind
+import Generators
 import PropertyBased
 import Testing
 
@@ -29,9 +30,9 @@ struct CallgrindDumpPropertyTests {
 
     @Test("A seeded generator reproduces the same dumps", .tags(.randomized))
     func seededReproducibility() {
-        var first = BenchmarkHarnessTestSupport.SeededRandomNumberGenerator(seed: 7)
-        var second = BenchmarkHarnessTestSupport.SeededRandomNumberGenerator(seed: 7)
-        func text(_ generator: inout BenchmarkHarnessTestSupport.SeededRandomNumberGenerator) -> String {
+        var first = Xoroshiro128Plus(seed: 7)
+        var second = Xoroshiro128Plus(seed: 7)
+        func text(_ generator: inout Xoroshiro128Plus) -> String {
             let values = (0 ..< 4).map { _ in Int.random(in: 0 ... 1000, using: &generator) }
             return "events: Ir Dr Dw Bc\ntotals: \(values.map(String.init).joined(separator: " "))\n"
         }

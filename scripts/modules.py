@@ -29,6 +29,8 @@ PACKAGES = [
     ("swift-property-based", "https://github.com/x-sheep/swift-property-based", "2.0.1"),
     # The HDR histogram ordo-one/benchmark stores measurements in; baselines encode it.
     ("hdrhistogram-swift", "https://github.com/HdrHistogram/hdrhistogram-swift", "0.2.0"),
+    # Tests only: seeded generators and draws that reproduce on every platform.
+    ("swiftprng", "https://github.com/Tyler-Keith-Thompson/SwiftPRNG", "0.0.1"),
     # Mocks generated from protocols (`@Mockable`). Uncomment when a module first needs one; see
     # MOCKING below.
     # ("mockable", "https://github.com/Kolos65/Mockable", "0.6.4"),
@@ -57,6 +59,13 @@ MODULES = [
     ("SimulatedMetrics", "Measurement", "SimulatedMetric: the ordo-one/benchmark metrics computed from Callgrind's simulated counts.", ["Callgrind", "BenchmarkBaselines"]),
 ]
 
+# Modules only iOS builds: SwiftUI views and what they draw with. Bazel builds them for the
+# simulator; Package.swift, the umbrella and the docs leave them out, and a module that depends on
+# one must be one too. A test target that depends on one, or on a Bazel label (`//tools/...`), runs
+# in the simulator as an ios_unit_test, and Package.swift leaves it out as well.
+IOS_MODULES = []
+IOS_MINIMUM = "18.0"
+
 # Executables: (name, description, dependencies). Each is an `.executableTarget` and product in
 # Package.swift and a swift_binary in Bazel (`bazel run //Sources/<name>`). Keep them thin: the
 # code lives in MODULES, where tests can reach it. They are left out of the umbrella and the docs.
@@ -66,7 +75,7 @@ EXECUTABLES = [
 # Test targets. SwiftPM rejects a target with no sources, so list a target only once its directory
 # holds tests. (name, dependencies)
 TEST_TARGETS = [
-    ("CallgrindTests", ["Callgrind", TEST_SUPPORT, "swift-property-based/PropertyBased"]),
+    ("CallgrindTests", ["Callgrind", TEST_SUPPORT, "swift-property-based/PropertyBased", "swiftprng/Generators"]),
     ("BenchmarkBaselinesTests", ["BenchmarkBaselines", TEST_SUPPORT, "swift-property-based/PropertyBased"]),
     ("BenchmarkCommandsTests", ["BenchmarkCommands", "BenchmarkBaselines", TEST_SUPPORT, "swift-property-based/PropertyBased"]),
     ("SimulatedMetricsTests", ["SimulatedMetrics", "Callgrind", "BenchmarkBaselines", TEST_SUPPORT, "swift-property-based/PropertyBased"]),
@@ -142,15 +151,30 @@ def check():
     assert len(tests) == len(set(tests)), "duplicate test target"
     for name, deps in TEST_TARGETS:
         for d in deps:
+            if d.startswith("//"):
+                continue
             if "/" in d:
                 assert d.split("/")[0] in packages, f"{name} depends on unknown package {d}"
             else:
                 assert d in names + [PROJECT, TEST_SUPPORT], f"{name} depends on unknown {d}"
     for name in PERFORMANCE_TESTS:
         assert name in tests, f"PERFORMANCE_TESTS names unknown test target {name}"
+        assert not simulator_test(name), f"{name} runs in the simulator, which PERFORMANCE_TESTS doesn't support"
+    for name in IOS_MODULES:
+        assert name in names, f"IOS_MODULES names unknown module {name}"
+    for name, _, _, deps in MODULES:
+        if name not in IOS_MODULES:
+            for d in deps:
+                assert d not in IOS_MODULES, f"{name} depends on the iOS module {d}, so it must be in IOS_MODULES"
     for name, deps in BENCHMARKS:
         for d in deps:
             assert d in names or (d == PROJECT and umbrella()), f"benchmark {name} imports unknown module {d}"
+
+
+def simulator_test(name):
+    """Whether test target `name` runs in the iOS simulator: it depends on an iOS module or a Bazel label."""
+    deps = dict(TEST_TARGETS)[name]
+    return any(d in IOS_MODULES or d.startswith("//") for d in deps)
 
 
 def spm_dep(d):
@@ -171,6 +195,27 @@ def requirement(version):
 def umbrella():
     """Whether the package has a generated umbrella module: unless MODULES lists the project's name."""
     return PROJECT not in [m[0] for m in MODULES]
+
+
+def package_modules():
+    """MODULES that Package.swift declares: every one but the iOS modules."""
+    return [m for m in MODULES if m[0] not in IOS_MODULES]
+
+
+def package_tests():
+    """TEST_TARGETS that Package.swift declares: every one but the simulator tests."""
+    return [t for t in TEST_TARGETS if not simulator_test(t[0])]
+
+
+def package_dependencies():
+    """PACKAGES that Package.swift declares: those a target it declares uses, or every one when no
+    module is iOS-only. A package only iOS modules and simulator tests use is Bazel's alone
+    (swift/Package.swift), as SwiftPM warns about a dependency no target uses."""
+    if not IOS_MODULES:
+        return PACKAGES
+    used = {d.split("/")[0] for _, deps in [(m[0], m[3]) for m in package_modules()] + [(e[0], e[2]) for e in EXECUTABLES] + package_tests()
+            for d in deps if "/" in d and not d.startswith("//")}
+    return [p for p in PACKAGES if p[0] in used]
 
 
 def apple_only(d):
@@ -196,6 +241,8 @@ def bazel_deps(deps):
 
 
 def bazel_label(d):
+    if d.startswith("//"):
+        return d
     if "/" in d:
         package, product = d.split("/")
         return f"@swiftpkg_{package.replace('-', '_')}//:{product}"
@@ -245,13 +292,13 @@ def package_swift():
     ]
     if umbrella():
         lines.append(f'    .library(name: "{PROJECT}", targets: ["{PROJECT}"]),')
-    lines += [f'    .library(name: "{m[0]}", targets: ["{m[0]}"]),' for m in MODULES]
+    lines += [f'    .library(name: "{m[0]}", targets: ["{m[0]}"]),' for m in package_modules()]
     lines += [f'    .executable(name: "{e[0]}", targets: ["{e[0]}"]),' for e in EXECUTABLES]
     lines += ["]", "", "let dependencies: [Package.Dependency] = ["]
-    lines += [f'    .package(url: "{url}", {requirement(version)}),' for _, url, version in PACKAGES]
+    lines += [f'    .package(url: "{url}", {requirement(version)}),' for _, url, version in package_dependencies()]
     lines += ["]", "", "let targets: [Target] = ["]
     group = None
-    for name, g, _, deps in MODULES:
+    for name, g, _, deps in package_modules():
         if g != group:
             lines.append(f"    // {g}")
             group = g
@@ -267,7 +314,7 @@ def package_swift():
     for name, _, deps in EXECUTABLES:
         dl = ", ".join(spm_dep(d) for d in deps)
         lines.append(f'    .executableTarget(name: "{name}", dependencies: [{dl}]{exclude_arg(f"Sources/{name}")}),')
-    all_deps = ", ".join(f'"{m[0]}"' for m in MODULES)
+    all_deps = ", ".join(f'"{m[0]}"' for m in package_modules())
     support_deps = ", ".join(spm_dep(d) for d in TEST_SUPPORT_DEPENDENCIES)
     support_deps_arg = f"dependencies: [{support_deps}], " if TEST_SUPPORT_DEPENDENCIES else ""
     if umbrella():
@@ -282,7 +329,7 @@ def package_swift():
         f'    .target(name: "{TEST_SUPPORT}", {support_deps_arg}path: "Tests/{TEST_SUPPORT}", exclude: bazelFiles),',
         "",
     ]
-    for name, deps in TEST_TARGETS:
+    for name, deps in package_tests():
         dl = ", ".join(spm_dep(d) for d in deps)
         files = excluded(f"Tests/{name}")
         ex = "[" + ", ".join(f'"{f}"' for f in files) + "]" if files != ["BUILD.bazel"] else "bazelFiles"
@@ -334,6 +381,23 @@ def build_bazel(name, description, deps):
         "    # Mock<Protocol> types from @Mockable, in debug builds only (MOCKING in scripts/modules.py).\n"
         '    defines = select({"//tools:debug": ["MOCKING"], "//conditions:default": []}),\n'
     ) if MOCKING in deps else ""
+    if name in IOS_MODULES:
+        return (
+            "# GENERATED by scripts/modules.py — edit the table there, then run `just modules`.\n\n"
+            'load("//tools:swift_rules.bzl", "swift_library")\n\n'
+            f"# {description}\n"
+            "# iOS only (IOS_MODULES in scripts/modules.py): built for the simulator through the app and the\n"
+            "# simulator tests, skipped by `bazel build //...` on the Mac.\n"
+            "swift_library(\n"
+            f'    name = "{name}",\n'
+            '    srcs = glob(["**/*.swift"]),\n'
+            f'    module_name = "{name}",\n'
+            f"{defines_attr}"
+            f"{deps_attr}"
+            '    target_compatible_with = ["@platforms//os:ios"],\n'
+            '    visibility = ["//visibility:public"],\n'
+            ")\n"
+        )
     doc_deps = "".join(f'        "{bazel_label(d)}:{d}Documentation",\n' for d in deps if "/" not in d)
     doc_deps_attr = f"    deps = [\n{doc_deps}    ],\n" if doc_deps else ""
     return (
@@ -434,8 +498,54 @@ def test_targets_bazel(name, deps, size, srcs, tags):
     )
 
 
+def simulator_test_build_bazel(name, deps, size):
+    """A test module run in the iOS simulator: its library, its snapshot references and the ios_unit_test."""
+    return (
+        "# GENERATED by scripts/modules.py — edit the table there, then run `just modules`.\n\n"
+        'load("@rules_apple//apple:ios.bzl", "ios_unit_test")\n'
+        'load("@rules_apple//apple:resources.bzl", "apple_resource_bundle")\n'
+        'load("//tools:swift_rules.bzl", "swift_library")\n\n'
+        "# The tests, run in the iOS simulator: the target depends on an iOS module (IOS_MODULES in\n"
+        f"# scripts/modules.py). Tagged `{RELEASE_EXCLUDED_TAG}`, like every target but the speed-reliant ones.\n"
+        "swift_library(\n"
+        f'    name = "{name}Library",\n'
+        "    testonly = True,\n"
+        '    srcs = glob(["**/*.swift"]),\n'
+        '    data = [":Snapshots"],\n'
+        f'    module_name = "{name}",\n'
+        f'    tags = ["{RELEASE_EXCLUDED_TAG}"],\n'
+        '    target_compatible_with = ["@platforms//os:ios"],\n'
+        f"{bazel_deps(deps)}"
+        ")\n\n"
+        "# The snapshot references under __Snapshots__, which the tests read from their bundle\n"
+        "# (tools/snapshots; `just record-snapshots` rewrites them).\n"
+        "apple_resource_bundle(\n"
+        '    name = "Snapshots",\n'
+        "    testonly = True,\n"
+        '    structured_resources = glob(["__Snapshots__/**"], allow_empty = True),\n'
+        f'    tags = ["{RELEASE_EXCLUDED_TAG}"],\n'
+        ")\n\n"
+        "# `bazel test` and the generated Xcode project both run this bundle in the simulator, inside the\n"
+        "# test host (tools/test_host), which gives windows a scene. The runner drives xcodebuild\n"
+        "# directly; the default one fails a run that holds only Swift Testing tests.\n"
+        "ios_unit_test(\n"
+        f'    name = "{name}",\n'
+        f'    size = "{size}",\n'
+        f'    minimum_os_version = "{IOS_MINIMUM}",\n'
+        f'    tags = ["{RELEASE_EXCLUDED_TAG}"],\n'
+        '    runner = "@rules_apple//apple/testing/default_runner:ios_xctestrun_ordered_runner",\n'
+        '    test_host = "//tools/test_host",\n'
+        '    visibility = ["//visibility:public"],\n'
+        f'    deps = [":{name}Library"],\n'
+        ")\n"
+    )
+
+
 def test_build_bazel(name, deps):
     size = TEST_SIZES.get(name, "small")
+    if simulator_test(name):
+        # Booting a simulator takes much of a minute on its own.
+        return simulator_test_build_bazel(name, deps, TEST_SIZES.get(name, "medium"))
     header = (
         "# GENERATED by scripts/modules.py — edit the table there, then run `just modules`.\n\n"
         'load("@rules_apple//apple:macos.bzl", "macos_unit_test")\n'
@@ -481,7 +591,7 @@ def executables_bzl():
 
 def library_directories():
     """Every non-test target directory the root Package.swift declares."""
-    directories = [f"Sources/{m[0]}" for m in MODULES] + [f"Sources/{e[0]}" for e in EXECUTABLES]
+    directories = [f"Sources/{m[0]}" for m in package_modules()] + [f"Sources/{e[0]}" for e in EXECUTABLES]
     if umbrella():
         directories.append(f"Sources/{PROJECT}")
     return sorted(directories + [f"Tests/{TEST_SUPPORT}"])
@@ -589,7 +699,7 @@ def main():
     write(os.path.join(ROOT, "Tests", TEST_SUPPORT, "BUILD.bazel"), test_support_build_bazel())
     write(os.path.join(ROOT, "tools", "executables.bzl"), executables_bzl())
     write(os.path.join(ROOT, "tools", "performance_tests.bzl"), performance_tests_bzl())
-    names = [m[0] for m in MODULES]
+    names = [m[0] for m in package_modules()]
     if umbrella():
         directory = os.path.join(ROOT, "Sources", PROJECT)
         write(os.path.join(directory, "BUILD.bazel"), build_bazel(PROJECT, f"Umbrella: `import {PROJECT}` imports every module.", names))

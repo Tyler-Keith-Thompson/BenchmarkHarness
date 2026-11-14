@@ -22,6 +22,7 @@ let products: [Product] = [
 let dependencies: [Package.Dependency] = [
     .package(url: "https://github.com/x-sheep/swift-property-based", from: "2.0.1"),
     .package(url: "https://github.com/HdrHistogram/hdrhistogram-swift", from: "0.2.0"),
+    .package(url: "https://github.com/Tyler-Keith-Thompson/SwiftPRNG", from: "0.0.1"),
 ]
 
 let targets: [Target] = [
@@ -39,7 +40,7 @@ let targets: [Target] = [
     // Shared fixtures (data only) for every test target.
     .target(name: "BenchmarkHarnessTestSupport", path: "Tests/BenchmarkHarnessTestSupport", exclude: bazelFiles),
 
-    .testTarget(name: "CallgrindTests", dependencies: ["Callgrind", "BenchmarkHarnessTestSupport", .product(name: "PropertyBased", package: "swift-property-based")], exclude: bazelFiles),
+    .testTarget(name: "CallgrindTests", dependencies: ["Callgrind", "BenchmarkHarnessTestSupport", .product(name: "PropertyBased", package: "swift-property-based"), .product(name: "Generators", package: "swiftprng")], exclude: bazelFiles),
     .testTarget(name: "BenchmarkBaselinesTests", dependencies: ["BenchmarkBaselines", "BenchmarkHarnessTestSupport", .product(name: "PropertyBased", package: "swift-property-based")], exclude: bazelFiles),
     .testTarget(name: "BenchmarkCommandsTests", dependencies: ["BenchmarkCommands", "BenchmarkBaselines", "BenchmarkHarnessTestSupport", .product(name: "PropertyBased", package: "swift-property-based")], exclude: bazelFiles),
     .testTarget(name: "SimulatedMetricsTests", dependencies: ["SimulatedMetrics", "Callgrind", "BenchmarkBaselines", "BenchmarkHarnessTestSupport", .product(name: "PropertyBased", package: "swift-property-based")], exclude: bazelFiles),

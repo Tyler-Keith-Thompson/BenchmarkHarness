@@ -39,4 +39,5 @@ use_repo(
     "swift_package",
     "swiftpkg_hdrhistogram_swift",
     "swiftpkg_swift_property_based",
+    "swiftpkg_swiftprng",
 )
