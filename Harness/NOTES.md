@@ -188,3 +188,20 @@ medians agree to within 12 instructions (`SingleValueSubject: send then execute`
 25,156,836; `SerialTaskQueue: enqueue` 11,511,942 each time), one BASELINE to within 174, and every
 malloc count is identical. Level-1 miss counts still move by up to 10% on Afluent's small ones.
 Baselines of async benchmarks recorded before must be re-recorded; synchronous ones are unchanged.
+
+## Hoy as the guest's virtual machine (BH-19)
+
+Hoy (hoy.cua.ai, from Cua) is a virtual machine monitor of its own on Hypervisor.framework, not on
+Virtualization.framework or QEMU, with its own devices, snapshots and forks. It is free to use,
+commercial use included, under the Hoy EULA; it is closed source, and its only interface is the
+`hoy` command-line tool (`create`, `start`, `exec`, `ssh`, `vnc`), with no API or Swift package. It
+needs an Apple silicon Mac on macOS 26 or later.
+
+It runs only macOS guests (macOS 26 and 27, from Apple's restore images), so it cannot run the
+Linux guest at all, and macOS's license allows two macOS virtual machines at once per Mac, which
+rules out concurrent recordings. Each virtual machine gets its own network address and is reached
+over ssh; its documentation describes no way to run one without a guest network interface (N4).
+Its published speed-up is in boot (5.3 s against 6.6 s on an M4 Pro), save and restore, none of
+which a recording spends much time on next to Valgrind. `GuestMachine` stays on
+apple/containerization; Hoy was not measured, since it cannot boot the guest. Cua's Lume does run
+Linux guests, but on Virtualization.framework, the framework containerization already uses.
