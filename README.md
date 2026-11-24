@@ -138,7 +138,7 @@ Bazel is the development build; SwiftPM is the published package. Both are gener
 | `just bench-simulated-compare` | Simulated counts now, compared against `simulated` |
 | `just harness` | Build and sign the tool |
 | `just harness-test` | The tool's tests |
-| `just generate` | An Xcode project from the Bazel graph |
+| `just generate` | An Xcode project from the Bazel graph, in `xcode/` |
 
 `AGENTS.md` describes the layout, the workflow and the house rules in full.
 
