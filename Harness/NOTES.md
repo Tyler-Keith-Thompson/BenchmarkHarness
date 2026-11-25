@@ -25,6 +25,56 @@ itself. Instruction, cache and branch counts are unaffected.
 
 The second hunk of `valgrind.patch` marks `B` as `Ijk_Boring`. Not reported upstream.
 
+## Valgrind 3.28.0: Callgrind's skipped PLT stubs on arm64 (BH-23)
+
+With `--skip-plt=yes`, Callgrind's default, a PLT stub is a skipped function: its costs are charged
+to the calling function rather than a function of its own. That default broke two things.
+
+**A call-stack leak.** A call into a stub pushes a call-stack entry, and the stub's `br x17` into
+another object is treated as a call too (`bbcc.c` emulates a jump across objects as one), pushing
+the target's entry. In `--ct-verbose2` traces of an arm64 Swift benchmark (ECS-27), the target's
+return pops only its own entry and leaves the stub's behind, so the caller's own return pops that
+stale entry instead of its frame. Each call made through a stub leaks one entry; they pile up until
+the stack pointer rises past the loop's frame and Callgrind unwinds them. `callgrind_control -b`
+showed about 350,000 repeated frames in one loop of ECS's `WorldBenchmarks`, and those loops ran
+about 100× slower under Callgrind: "read a resource and a component of a world held by a final
+class" (470 million instructions) took over an hour per iteration, past the 1000× slowed clock's
+headroom for its 3 s `maxDuration`, so it recorded one cold iteration.
+
+**Costs that survive a zero.** While collection is on, a skipped function's costs also go to the
+caller's `skipped` array (`main.c`, the cache simulation's log functions; `bbcc.c` without it).
+`CALLGRIND_ZERO_STATS` resets each BBCC's own costs but not that array (`zero_bbcc`), and the next
+dump adds it in (`dump.c`). A benchmark that calls `startMeasurement()` runs its setup inside a
+window that the shim then discards with a zero, so the PLT stubs its setup ran through (every call
+into another library, `swift_retain` among them) were counted in its iteration. Benchmarks without
+the explicit calls collect nothing between windows and were unaffected.
+
+`run-benchmarks.sh` passes `--skip-plt=no`, so each stub is a function with a call-stack entry and
+costs of its own: the stub's return and the caller's both match, and a zero clears everything. A
+Valgrind patch was not needed; the option is upstream's own, and its other effect, stubs appearing
+as functions in the call graph, is in nothing the harness reads. Not reported upstream.
+
+Its effect, measured with the harness before and after on the same sources, collection under
+`--toggle-collect='__swift_run_job(*'` included:
+
+- This repository's benchmarks: every instruction count is identical except the two
+  `MeasurementWindowBenchmarks` that call `startMeasurement()`, which drop by 194 each (9,615 to
+  9,421 and 9,685 to 9,491), 3 and 73 more than the whole closure's 9,418. Their level-1 misses
+  drop from 38 and 40 to 27; every other miss and mispredicted-branch count moved within the noise
+  "What repeats exactly" describes. Malloc counts, from the native run, are unchanged.
+- ECS's `WorldBenchmarks` at a50d8da (46 benchmarks; the two slowed ones can't finish under the old
+  harness): the 4 that don't call `startMeasurement()` count exactly what they did. The 42 that call
+  it after building a world drop by their setup's stub instructions, most by 194 to 16,000, those
+  with large setups by much more: "look up a thousand indexed values, a thousand entities each" 25,433,726 to
+  1,433,480, "update one type reading one, grouped with it" 136,026,568 to 84,016,826, "list every
+  entity sorted by the key of an ordered index" 33,560,045 to 16,493,312, "insert an indexed
+  component into every entity" 2.504 to 2.348 billion. Retain counts are identical, and malloc and
+  release counts differ by at most 2, from the native run.
+
+The whole target now records three iterations of every benchmark in 33 minutes, the final-class
+read in 1 min 18 s. Simulated baselines of benchmarks that call `startMeasurement()` must be
+re-recorded.
+
 ## Containerization: an exec'd process's standard output can stay open after it exits
 
 With apple/containerization 0.54.0, a process started with `LinuxContainer.exec` whose standard
@@ -136,9 +186,10 @@ what follows the last RESET.
 `Benchmarks/MeasurementWindowBenchmarks` measures a thousand calls three ways. Before the fix:
 9,415 (whole closure), 9,418 to 9,053,531 (after a million calls of setup and
 `startMeasurement()`), 9,489 to 9,125,701 (between `startMeasurement()` and `stopMeasurement()`).
-After: 9,415, 9,607 and 9,678, each with identical samples. The explicit calls' own path costs
-about 200 to 260 instructions more than ordo-one's implicit start and stop; the calibration
-window measures the implicit path, so that difference stays in, constant per benchmark.
+After: 9,415, 9,607 and 9,678, each with identical samples; with `--skip-plt=no` (BH-23), 9,418,
+9,421 and 9,491. The explicit calls' own path costs 3 to 73 instructions more than ordo-one's
+implicit start and stop; the calibration window measures the implicit path, so that difference
+stays in, constant per benchmark.
 Benchmarks without explicit calls count what they did before, exactly.
 
 ## Async benchmarks: per-thread collection and libdispatch's scheduling (BH-17)

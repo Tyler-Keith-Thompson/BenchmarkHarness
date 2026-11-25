@@ -5,7 +5,9 @@
 # The executable reads requests from descriptor 0 and writes replies to descriptor 3, which is the
 # original standard output; its own output and Valgrind's go to standard error and a log file, so
 # nothing else reaches the protocol stream. The cache geometry is fixed rather than detected, so
-# the counts do not depend on the host's processor.
+# the counts do not depend on the host's processor. PLT stubs are functions of their own
+# (--skip-plt=no): skipped, they leak a call-stack entry per call on arm64, slowing some loops a
+# hundredfold, and their costs survive the zero that discards a setup's window (Harness/NOTES.md).
 #
 # With "native" as the fifth argument the executable runs without Valgrind, under the same shim,
 # for the metrics ordo-one/benchmark counts itself (allocations, retains), which don't need the
@@ -40,6 +42,7 @@ exec "$prefix/valgrind/bin/valgrind" \
     --cache-sim=yes --branch-sim=yes \
     --I1=32768,8,64 --D1=32768,8,64 --LL=8388608,16,64 \
     --collect-atstart=no --instr-atstart=no --toggle-collect='__swift_run_job(*' \
+    --skip-plt=no \
     --callgrind-out-file="$dumps/callgrind.out" \
     --log-file="$dumps/valgrind.log" \
     "$executable" --input-fd 0 --output-fd 3 --quiet true
