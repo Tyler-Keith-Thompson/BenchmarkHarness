@@ -91,7 +91,9 @@ of machine and committing `.benchmarkBaselines/`.
 
 **The first run takes several minutes.** It downloads Valgrind (and on macOS a Linux kernel and
 Swift image) and builds Valgrind, once. Later runs reuse the cache in
-`~/Library/Caches/BenchmarkHarness` on macOS and `~/.cache/BenchmarkHarness` on Linux. On Linux,
+`~/Library/Caches/BenchmarkHarness` on macOS and `~/.cache/BenchmarkHarness` on Linux. Build
+products sit in its `guest/builds`, one entry per checkout (on macOS a sparse disk image, which
+grows as builds write to it); delete one to reclaim its space. On Linux,
 building Valgrind needs `make`, `gcc`, the C library headers, `bzip2` and `patch`; run as root
 with `apt-get`, as in a `swift` container, the tool installs them itself.
 

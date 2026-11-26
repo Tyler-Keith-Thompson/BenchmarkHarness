@@ -1,6 +1,8 @@
 #if os(macOS)
 import Containerization
+import ContainerizationEXT4
 import Foundation
+import SystemPackage
 
 /// A Linux virtual machine running one container, booted through Apple's Containerization
 /// framework, in which the harness runs commands.
@@ -22,6 +24,45 @@ public actor GuestMachine: Machine {
             self.hostPath = hostPath
             self.guestPath = guestPath
             self.readOnly = readOnly
+        }
+    }
+
+    /// An ext4 disk image on the host, which the guest mounts as a block device.
+    ///
+    /// Unlike a ``Share``, its file names are case-sensitive whatever the host's file system is,
+    /// and it outlives the guest.
+    public struct Disk: Sendable {
+        /// The image file on the host.
+        public let hostPath: URL
+        /// Where the guest mounts it.
+        public let guestPath: String
+
+        public init(hostPath: URL, guestPath: String) {
+            self.hostPath = hostPath
+            self.guestPath = guestPath
+        }
+
+        /// Formats an empty, journalled ext4 file system of `sizeInBytes` at ``hostPath`` unless
+        /// an image is there already.
+        ///
+        /// The file is sparse: it takes host disk space only as the guest writes to it.
+        ///
+        /// - Throws: An error from Containerization's ext4 formatter, leaving no image behind.
+        public func formatIfMissing(sizeInBytes: UInt64) throws {
+            guard !FileManager.default.fileExists(atPath: hostPath.path) else { return }
+            try FileManager.default.createDirectory(at: hostPath.deletingLastPathComponent(), withIntermediateDirectories: true)
+            // Formatted beside the image and moved into place, so a format that fails or is
+            // interrupted never leaves a half-written image to mount next time.
+            let staging = hostPath.deletingLastPathComponent().appending(path: ".\(hostPath.lastPathComponent)-\(UUID().uuidString)")
+            do {
+                // Journalled, so a guest stopped mid-build leaves a file system that mounts.
+                let formatter = try EXT4.Formatter(FilePath(staging.path), minDiskSize: sizeInBytes, journal: .default)
+                try formatter.close()
+                try FileManager.default.moveItem(at: staging, to: hostPath)
+            } catch {
+                try? FileManager.default.removeItem(at: staging)
+                throw error
+            }
         }
     }
 
@@ -56,6 +97,7 @@ public actor GuestMachine: Machine {
     ///   - cpus: The guest's virtual processors.
     ///   - memoryInBytes: The guest's memory, beyond what its kernel and init process use.
     ///   - shares: Host directories to share.
+    ///   - disks: Disk images to mount, each formatted already (``Disk/formatIfMissing(sizeInBytes:)``).
     ///   - proxySocket: The host proxy's socket.
     ///   - bridge: The guest path of the proxy bridge script.
     public static func boot(
@@ -64,6 +106,7 @@ public actor GuestMachine: Machine {
         cpus: Int,
         memoryInBytes: UInt64,
         shares: [Share],
+        disks: [Disk],
         proxySocket: String,
         bridge: String
     ) async throws -> GuestMachine {
@@ -92,6 +135,9 @@ public actor GuestMachine: Machine {
                     destination: share.guestPath,
                     options: share.readOnly ? ["ro"] : []
                 ))
+            }
+            for disk in disks {
+                configuration.mounts.append(.block(format: "ext4", source: disk.hostPath.path, destination: disk.guestPath))
             }
             configuration.sockets.append(UnixSocketConfiguration(
                 source: URL(fileURLWithPath: proxySocket),

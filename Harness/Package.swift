@@ -20,6 +20,8 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.6.0"),
         .package(url: "https://github.com/apple/swift-crypto", from: "3.0.0"),
         .package(url: "https://github.com/apple/swift-nio", from: "2.80.0"),
+        // Containerization's ext4 formatter takes its FilePath.
+        .package(url: "https://github.com/apple/swift-system", from: "1.4.0"),
     ],
     targets: [
         .target(
@@ -30,6 +32,8 @@ let package = Package(
                 .product(name: "Callgrind", package: "BenchmarkHarness"),
                 .product(name: "SimulatedMetrics", package: "BenchmarkHarness"),
                 .product(name: "Containerization", package: "containerization", condition: .when(platforms: [.macOS])),
+                .product(name: "ContainerizationEXT4", package: "containerization", condition: .when(platforms: [.macOS])),
+                .product(name: "SystemPackage", package: "swift-system", condition: .when(platforms: [.macOS])),
                 .product(name: "Crypto", package: "swift-crypto"),
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),

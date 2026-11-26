@@ -41,6 +41,19 @@ struct BenchmarkTargetsTests {
         #expect(actual == expected)
     }
 
+    @Test("Two packages of one checkout build into different scratch directories, and one package always into the same")
+    func scratchPerPackage() {
+        let builds = "/builds"
+
+        let candidates = SimulatedBaselineRecorder.scratchPath(builds: builds, package: "Benchmarks/CBORCandidates")
+        let nnabeyang = SimulatedBaselineRecorder.scratchPath(builds: builds, package: "Benchmarks/CBORCandidatesNnabeyang")
+        let root = SimulatedBaselineRecorder.scratchPath(builds: builds, package: "")
+
+        #expect(Set([candidates, nnabeyang, root]).count == 3)
+        #expect(candidates == SimulatedBaselineRecorder.scratchPath(builds: builds, package: "Benchmarks/CBORCandidates"))
+        #expect([candidates, nnabeyang, root].allSatisfy { $0.hasPrefix("/builds/") })
+    }
+
     @Test("No products means no builds")
     func noBuildCommands() {
         let build = ["swift", "build"]

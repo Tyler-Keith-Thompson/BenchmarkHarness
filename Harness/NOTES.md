@@ -173,6 +173,30 @@ scratch directory and deletes SwiftPM's cached plans (`*.yaml`, `description.jso
 change, so a build after an added, removed or renamed file always plans again; compiled products
 are kept.
 
+## Where builds go: a case-sensitive disk per checkout, a directory per package (BH-26)
+
+SwiftPM's scratch directories live in the cache's `guest/builds/`. On macOS that is
+`<checkout digest>.ext4`, a sparse 256 GiB ext4 image formatted by Containerization's
+`EXT4.Formatter` (journalled), which the guest mounts at `/builds` as a block device. On Linux it
+is the directory `<checkout digest>/`. Inside it, each package of the checkout has its own scratch
+directory, keyed by the package's path relative to the checkout (`scratchPath(builds:package:)`).
+
+Scratch directories used to sit on the shared volume, one per checkout. On a Mac that share is the
+host's APFS, case-insensitive by default, and every `--package-path` under one checkout built
+into the same directory. Traffluent's CBOR comparison packages showed the result: one built
+valpackett/SwiftCBOR (module `SwiftCBOR`), and a later one using nnabeyang/swift-cbor (module
+`SwiftCbor`) then failed every time with `no such module 'SwiftCbor'`, because the share merged the
+two modules' files. A package depending on both failed the same way even in a fresh scratch.
+Reproduced with harness 0.0.11; all three record with the disk.
+
+Why a disk image rather than the guest's own root file system, which is case-sensitive too: the
+container's root file system is deleted at shutdown, so every run would rebuild every dependency.
+The image persists, so a second run of an unchanged package plans and links in about a second.
+It takes host disk space only as the guest writes to it, and only one guest mounts it at a time,
+under the checkout lock. Delete an image to reclaim its space; the next run formats a new one.
+A separate scratch per package costs each package one cold build of its dependencies, but two
+packages of a checkout never share a module's build products.
+
 ## Explicit startMeasurement() and stopMeasurement()
 
 A closure that calls `startMeasurement()` resets and reads the counters again, after its setup, and

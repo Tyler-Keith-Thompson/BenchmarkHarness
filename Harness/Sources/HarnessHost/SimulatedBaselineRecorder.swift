@@ -87,9 +87,19 @@ public struct SimulatedBaselineRecorder: Sendable {
         let valgrindSource = try await PinnedDownload.valgrindSource.fetch(into: shared.appending(path: "downloads"))
         let patch = try Data(contentsOf: files.appending(path: "valgrind.patch"))
         let valgrindBuild = "valgrind-3.28.0-\(Self.digest(patch).prefix(12))"
+        let checkout = String(Self.digest(Data(sourceRoot.path.utf8)).prefix(16))
+        // Build products used to be kept here, a directory per checkout on the shared volume.
+        try? FileManager.default.removeItem(at: shared.appending(path: "scratch/\(checkout)"))
 
         #if os(macOS)
-        let layout = Layout(shared: "/harness", source: "/source", work: "/work", prefix: "/opt")
+        let layout = Layout(shared: "/harness", source: "/source", work: "/work", prefix: "/opt", builds: "/builds")
+        // The shared volume is the host's file system, which is case-insensitive on a Mac by
+        // default, so two modules whose names differ only in case (SwiftCBOR, SwiftCbor) would
+        // overwrite each other's build products there. The checkout's builds go on an ext4 disk
+        // image instead: case-sensitive, and kept between runs so builds stay incremental. Only
+        // this run's guest mounts it, under the checkout lock.
+        let builds = GuestMachine.Disk(hostPath: shared.appending(path: "builds/\(checkout).ext4"), guestPath: layout.builds)
+        try builds.formatIfMissing(sizeInBytes: 256 << 30)
         let kernel = try await Self.kernel(in: cachePath)
         let socket = FileManager.default.temporaryDirectory.appending(path: "bh-\(ProcessInfo.processInfo.processIdentifier).sock").path
         let proxy = try await ConnectProxy.start(socketPath: socket)
@@ -104,6 +114,7 @@ public struct SimulatedBaselineRecorder: Sendable {
                     .init(hostPath: shared, guestPath: layout.shared, readOnly: false),
                     .init(hostPath: sourceRoot, guestPath: layout.source, readOnly: true),
                 ],
+                disks: [builds],
                 proxySocket: socket,
                 bridge: "\(layout.shared)/\(files.lastPathComponent)/proxy-bridge.pl"
             )
@@ -139,8 +150,9 @@ public struct SimulatedBaselineRecorder: Sendable {
         let layout = Layout(
             shared: shared.path,
             source: sourceRoot.path,
-            work: shared.appending(path: "work/\(Self.digest(Data(sourceRoot.path.utf8)).prefix(16))").path,
-            prefix: shared.appending(path: "host/\(valgrindBuild)").path
+            work: shared.appending(path: "work/\(checkout)").path,
+            prefix: shared.appending(path: "host/\(valgrindBuild)").path,
+            builds: shared.appending(path: "builds/\(checkout)").path
         )
         return try await measure(
             on: HostMachine(),
@@ -168,6 +180,8 @@ public struct SimulatedBaselineRecorder: Sendable {
         let work: String
         /// Where Valgrind and the shim are installed.
         let prefix: String
+        /// The checkout's build products: SwiftPM's scratch directory for each of its packages.
+        let builds: String
     }
 
     private func measure<Runner: Machine>(
@@ -191,7 +205,7 @@ public struct SimulatedBaselineRecorder: Sendable {
         let machineFiles = "\(layout.shared)/\(files.lastPathComponent)"
         // The archive holds an installation under one prefix, so each prefix has its own.
         let valgrindArchive = "\(layout.shared)/\(valgrindBuild)-\(Self.digest(Data(layout.prefix.utf8)).prefix(8)).tar"
-        let scratch = "\(layout.shared)/scratch/\(Self.digest(Data(sourceRoot.path.utf8)).prefix(16))"
+        let scratch = Self.scratchPath(builds: layout.builds, package: relativePackage)
         let machineDumpsRoot = "\(layout.shared)/dumps/\(run)"
         let network = machine.networkEnvironment
 
@@ -359,6 +373,17 @@ public struct SimulatedBaselineRecorder: Sendable {
         let windowCost = overheadInstructions.isEmpty ? 0 : overheadInstructions[(overheadInstructions.count - 1) / 2]
         // Unbuffered, so progress shows while a long run continues.
         FileHandle.standardOutput.write(Data(("\(identifier.target): \(identifier.name) (\(iterations.count) iterations in \(elapsed.formatted(.units(allowed: [.minutes, .seconds], width: .narrow))), p50, less \(windowCost) instructions of measuring) — \(values.joined(separator: ", "))" + "\n").utf8))
+    }
+
+    /// SwiftPM's scratch directory for the package at `package`, a path relative to the checkout's
+    /// root, within the checkout's build products at `builds`.
+    ///
+    /// Each package of a checkout has its own, so two packages whose dependencies hold modules of
+    /// the same name never build into one directory.
+    ///
+    /// - Complexity: O(*n*), where *n* is the length of `package`.
+    package static func scratchPath(builds: String, package: String) -> String {
+        "\(builds)/\(digest(Data(package.utf8)).prefix(16))"
     }
 
     /// The commands that build `products`, one each: `build` followed by `--product` and the
