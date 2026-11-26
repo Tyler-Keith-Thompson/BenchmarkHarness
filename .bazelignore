@@ -18,6 +18,3 @@ Benchmarks/.swiftpm
 
 # The host tool is SwiftPM-only: it needs macOS 26's Containerization framework.
 Harness
-
-# Overlays the bootstrap script copies over the template (server and embedded types); not built in place.
-templates

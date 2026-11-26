@@ -63,11 +63,13 @@ in beside the project's own: keep one definition, holding the project's rows, an
   Apple's alone goes in `APPLE_ONLY_TESTS` too. A target that depends on an iOS module or a Bazel
   label runs in the simulator alone already, so it isn't listed.
   It needs the test host and the simulator settings in `.bazelrc`, which the app type and the
-  `--ios` option ship (`just modules` refuses the table without them).
-- Add an iOS app, iOS modules and simulator tests to this project: from the project template's
-  checkout, `./template.py add <project> --ios` (after `just template-update`, if the stamp
-  predates the option). It brings `Apps/BenchmarkHarness`, the test host, the simulator settings and
-  `tools/ios.bzl`; until then `just modules` refuses `IOS_MODULES` and simulator tests.
+  `--simulator` and `--ios` options ship (`just modules` refuses the table without them).
+  From the project template's checkout, `./template.py add <project> --simulator` brings them
+  without an app.
+- Add an iOS app to this project: from the project template's checkout,
+  `./template.py add <project> --ios` (after `just template-update`, if the stamp predates the
+  option). It brings `Apps/BenchmarkHarness`, the test host, the simulator settings and `tools/ios.bzl`;
+  until then `just modules` refuses `IOS_MODULES` and simulator tests.
 - Give a test target an environment variable under `bazel test` (an integration test that runs
   only when `TEST_DATABASE_URL` is set, say): its name and the variables in `TEST_ENVIRONMENT`
   (`{"<Target>Tests": ["TEST_DATABASE_URL"]}`), then `just modules`. Bazel strips the test
@@ -113,6 +115,16 @@ in beside the project's own: keep one definition, holding the project's rows, an
   `Bundle.module`. Not under `Performance/`, which the target leaves out: the speed-reliant tests
   of a `PERFORMANCE_TESTS` target list theirs under `<X>PerformanceTests`, paths relative to
   `Tests/<X>/Performance`, and read them through `Bundle.module` in debug and release alike.
+- Generate a Swift source at build time (overloads for each arity, tables from a data file): the
+  generator is a Bazel executable that writes the source to standard output, or, given output
+  names, gets their paths before a `--`. List it in `GENERATED_SOURCES` under the module or test
+  target (`{"<Module>": [("<Name>", "//tools/<generator>", [<input labels>], [])]}`), create an
+  empty `Generated/<Name>.swift` in the target's directory, then `just modules` and `just sources`.
+  Bazel compiles the generator's output; SwiftPM compiles the copy under `Generated/`, which
+  `just sources` rewrites and `<Name>_test` fails on while it differs from what the generator
+  writes. Commit the copy, and run `just sources` after a change to the generator or its inputs.
+  `check()` refuses a copy that doesn't exist, and a speed-reliant, iOS or firmware target.
+  Simulated benchmarks measure the generator's output, at the copy's path.
 - Add a macro: its compiler plugin is a row in `MACROS` (name, group, description, and only
   package products as dependencies: swift-syntax's, with `swift-syntax` in `PACKAGES`), its sources
   in `Sources/<Plugin>/` (an `@main` `CompilerPlugin` listing the macro types), then `just modules`
@@ -168,6 +180,7 @@ Every shell command gets a timeout. macOS has no `timeout`; use
 | `just test-release` | `--config=release`: builds and runs only the `XPerformanceTests` targets |
 | `just spm-test`, `just verify` | SwiftPM tests; both build systems |
 | `just modules` | Regenerate build files from `scripts/modules.py` |
+| `just sources` | Rewrite the checked-in copies of generated sources (`GENERATED_SOURCES`) that SwiftPM compiles |
 | `just resolve` | Re-resolve Bazel's SwiftPM dependencies after editing `PACKAGES` |
 | `just bench [--target X]` | Benchmarks; `just bench-compare` against the `main` baseline |
 | `just bench-simulated-compare [--target X]` | Simulated counts (Callgrind in a Linux VM, from this repository's `Harness/`) against the committed `simulated` baseline; `just bench-simulated [--target X]` re-records it. Both measure only targets whose code changed |
@@ -196,18 +209,19 @@ Every shell command gets a timeout. macOS has no `timeout`; use
 
 The owner's own libraries, first in line under "Don't reinvent the wheel" (House rules). Reach
 for them before writing a graph, a container or an operator chain by hand, and before adding a
-third-party package for the same job. Add one as a row in `PACKAGES` (`scripts/modules.py`).
+third-party package for the same job. Add one as a row in `PACKAGES` (`scripts/modules.py`) under its
+identity, the repository's name in lowercase (`swiftprng`), and list a product among a module's
+dependencies as `"<identity>/<Product>"` (`"swiftprng/Generators"`), as the rows below spell them.
 
 | Library | What it is | Use it for |
 |---|---|---|
-| [Grafluent](https://github.com/Tyler-Keith-Thompson/Grafluent) | A generic, high-performance graph library: copy-on-write representations (`AdjacencyList`, `CompressedSparseRow`, `AdjacencyMatrix`, pseudographs, stable graphs), graph classes with invariants (`DirectedAcyclicGraph`, `BipartiteGraph`, `Tree`) and algorithms (traversal, shortest paths, flows, matching, connectivity, isomorphism, layout) | Anything shaped like a graph or DAG: dependency orderings, scheduling, routing, state machines, reachability. Products are per module (`.product(name: "ShortestPaths", package: "Grafluent")`); the umbrella is `Grafluent`. |
-| [GrafluentCollections](https://github.com/Tyler-Keith-Thompson/GrafluentCollections) | Graph-shaped collections as copy-on-write values with the standard library's and swift-collections' API shape: balanced search trees (`AVLTree`/`AVLDictionary`, `RedBlackTree`, `Treap`, `SplayTree`) and `FenwickTree` so far; tries, suffix structures, decision diagrams, B-trees, segment, interval and spatial trees, ropes, persistent trees and an LRU cache planned. Tree- and graph-shaped ones convert to the matching Grafluent type | Sorted sets and dictionaries that take inserts and removals, prefix and range sums with updates; check its backlog before hand-writing a planned structure. Products are per module (`.product(name: "BinarySearchTrees", package: "GrafluentCollections")`); the umbrella is `GrafluentCollections`. |
-| [SwiftPRNG](https://github.com/Tyler-Keith-Thompson/SwiftPRNG) | Seeded random numbers that reproduce bit for bit on every platform and Swift release: generators as values (`Xoshiro256StarStar`, `Xoroshiro128Plus`, `SplitMix64`, with `jump()` for streams that never overlap), platform-stable draws (`uniform(in:)`, `integer(in:)`, `bernoulli(_:)`, with `checked` spellings), `SeedTree` (a seed per named decision, so adding a draw shifts nothing elsewhere, with overrides and `fitting` to search one subtree for a seed that meets a predicate) and `SeedSearch` (the smallest matching seed, concurrently) | Every seeded test, and any program whose randomness must replay: simulations, procedural generation, games, sampling. Never hand-write a generator. `Xoroshiro128Plus(seed:)` gives the same numbers as a hand-written `SeededRandomNumberGenerator` (xoroshiro128+ seeded by SplitMix64), so replacing one changes no pinned value. Products are per module (`.product(name: "Generators", package: "SwiftPRNG")`: `Generators`, `Sampling`, `SeedTrees`, `SeedDiscovery`); the umbrella is `SwiftPRNG`. |
-| [DependencyInjection](https://github.com/Tyler-Keith-Thompson/DependencyInjection) | Swift 6 dependency injection: `Factory` values on `Container`, `@Injected` / `@LazyInjected` / `@ConstructorInjected`, unique, cached and shared scopes, hierarchical containers, and `withTestContainer` so concurrent tests never share state | Any seam a test needs to replace (clocks, network, storage). Tests wrap their body in `withTestContainer { }` and register doubles there. Product `DependencyInjection`. |
-| [Afluent](https://github.com/Tyler-Keith-Thompson/Afluent) | Reactive operators over async/await: `DeferredTask` (a unit of work that yields one value) and `AsyncSequence` extensions with Combine's names (`map`, `flatMap`, `catch`, `retry`, `debounce`, `share`, …), plus `AfluentTesting` | Pipelines over async work where Combine would once have been used; a Combine replacement in new code. Products `Afluent` and, for test targets, `AfluentTesting`. |
+| [Grafluent](https://github.com/Tyler-Keith-Thompson/Grafluent) | A generic, high-performance graph library: copy-on-write representations (`AdjacencyList`, `CompressedSparseRow`, `AdjacencyMatrix`, pseudographs, stable graphs), graph classes with invariants (`DirectedAcyclicGraph`, `BipartiteGraph`, `Tree`) and algorithms (traversal, shortest paths, flows, matching, connectivity, isomorphism, layout) | Anything shaped like a graph or DAG: dependency orderings, scheduling, routing, state machines, reachability. Products are per module (`"grafluent/ShortestPaths"`); the umbrella is `grafluent/Grafluent`. |
+| [GrafluentCollections](https://github.com/Tyler-Keith-Thompson/GrafluentCollections) | Graph-shaped collections as copy-on-write values with the standard library's and swift-collections' API shape: balanced search trees (`AVLTree`/`AVLDictionary`, `RedBlackTree`, `Treap`, `SplayTree`) and `FenwickTree` so far; tries, suffix structures, decision diagrams, B-trees, segment, interval and spatial trees, ropes, persistent trees and an LRU cache planned. Tree- and graph-shaped ones convert to the matching Grafluent type | Sorted sets and dictionaries that take inserts and removals, prefix and range sums with updates; check its backlog before hand-writing a planned structure. Products are per module (`"grafluentcollections/BinarySearchTrees"`); the umbrella is `grafluentcollections/GrafluentCollections`. |
+| [SwiftPRNG](https://github.com/Tyler-Keith-Thompson/SwiftPRNG) | Seeded random numbers that reproduce bit for bit on every platform and Swift release: generators as values (`Xoshiro256StarStar`, `Xoroshiro128Plus`, `SplitMix64`, with `jump()` for streams that never overlap), platform-stable draws (`uniform(in:)`, `integer(in:)`, `bernoulli(_:)`, with `checked` spellings), `SeedTree` (a seed per named decision, so adding a draw shifts nothing elsewhere, with overrides and `fitting` to search one subtree for a seed that meets a predicate) and `SeedSearch` (the smallest matching seed, concurrently) | Every seeded test, and any program whose randomness must replay: simulations, procedural generation, games, sampling. Never hand-write a generator. `Xoroshiro128Plus(seed:)` gives the same numbers as a hand-written `SeededRandomNumberGenerator` (xoroshiro128+ seeded by SplitMix64), so replacing one changes no pinned value. Products are per module (`"swiftprng/Generators"`: `Generators`, `Sampling`, `SeedTrees`, `SeedDiscovery`); the umbrella is `swiftprng/SwiftPRNG`. |
+| [DependencyInjection](https://github.com/Tyler-Keith-Thompson/DependencyInjection) | Swift 6 dependency injection: `Factory` values on `Container`, `@Injected` / `@LazyInjected` / `@ConstructorInjected`, unique, cached and shared scopes, hierarchical containers, and `withTestContainer` so concurrent tests never share state | Any seam a test needs to replace (clocks, network, storage). Tests wrap their body in `withTestContainer { }` and register doubles there. Product `"dependencyinjection/DependencyInjection"`. |
+| [Afluent](https://github.com/Tyler-Keith-Thompson/Afluent) | Reactive operators over async/await: `DeferredTask` (a unit of work that yields one value) and `AsyncSequence` extensions with Combine's names (`map`, `flatMap`, `catch`, `retry`, `debounce`, `share`, …), plus `AfluentTesting` | Pipelines over async work where Combine would once have been used; a Combine replacement in new code. Products `"afluent/Afluent"` and, for test targets, `"afluent/AfluentTesting"`. |
 
-Their conventions carry over: value types, typed errors, `checked:` spellings that throw where
-the plain spelling traps, tests with Swift Testing.
+Their conventions carry over: value types, typed errors, tests with Swift Testing.
 
 ## Workflow
 
@@ -222,8 +236,7 @@ have.
 2. **Tests** in `Tests/<Module>Tests`:
    - hand-worked cases;
    - edge cases: empty input, one element, the boundaries of every range;
-   - `checked:` spellings and their errors;
-   - exit tests for every trap;
+   - every error the code throws, each from the input that causes it;
    - a property test against a naive reference (`swift-property-based`).
 3. **A README example**, if the feature changes how the package is introduced, copied verbatim
    into `Tests/BenchmarkHarnessTests`.
@@ -240,9 +253,9 @@ have.
    whose instruction and malloc counts moved less than compare's 5% threshold keeps its recorded
    entry. So the file changes only where a benchmark did, and pull requests that change different
    benchmarks of one target merge without a conflict. Resolve a conflict by re-recording after
-   the merge, never by hand. A benchmark whose mallocs drop to zero counts as moved. Harness
-   options (`--iterations`, `--filter`) measure uncached and write the same format, keeping the
-   entries that didn't move. To rewrite every entry (a change aimed at cache misses alone), delete
+   the merge, never by hand. A benchmark whose mallocs drop to zero, or that was measured over a
+   different number of iterations, counts as moved. Harness options (`--iterations`, `--filter`)
+   measure uncached and write the same format, keeping the entries that didn't move. To rewrite every entry (a change aimed at cache misses alone), delete
    the file first.
 
 Watch for these:
@@ -357,7 +370,7 @@ library with none of that can skip this section.
 - Each test is self-contained and portable: no assertion or setup helpers, not DRY; a test
   copied to another file still works. Shared fixture data in `BenchmarkHarnessTestSupport` is tolerated;
   shared assertions are not.
-- Test names state the rule they pin ("The checked spelling throws EmptyName for an empty name").
+- Test names state the rule they pin ("An empty name throws EmptyName").
 - **Sociable.** A test runs the real code under test and its real collaborators wherever they are
   fast and deterministic, and mocks only the seams that reach out (network, disk, clock) or that
   it must steer. Inside `withTestContainer { }`, `Container.x.useProduction()` resolves the real
@@ -414,10 +427,13 @@ library with none of that can skip this section.
 
 ### Errors
 
-- **Plain spellings trap** on a precondition failure, like an `Array` subscript. They are the
-  fast path.
-- **`checked:` spellings throw** a typed, payload-free error (`Greeting(checkedName:)` throws
-  `EmptyName`). There are no nil-returning variants; `try?` gives `nil`.
+- **Everything that can fail throws** a typed, payload-free error from its one spelling
+  (`Greeting(name:)` throws `EmptyName`). There are no second throwing spellings, no nil-returning
+  variants and no traps that can fire at run time; `try?` gives `nil`. Spellings that trap, each
+  with a throwing twin, suit only a benchmarked library whose API runs in its callers' hot loops
+  (graphs, collections, numeric kernels), which the project template renders with
+  `--performance`; its README says when that fits. Anywhere else, and wherever input comes from
+  users, the network or files, keep throwing: a caller can ignore an error, but not a crash.
 - **Invariant-breaking mutations throw on the plain spelling** and change nothing, with one typed
   error per invariant whose cases make a single `catch` exhaustive.
 - **Queries whose failure is the answer return a witness** (`findCycle() -> Cycle?`), not an
@@ -428,15 +444,3 @@ library with none of that can skip this section.
 - Results are dedicated types, not tuples.
 - Lazy views end in `View`; the materialized form drops the suffix.
 - Materializing operations are static factories on a target the caller picks.
-
-### Performance patterns
-
-- Public types are copy-on-write structs, `@frozen`, with `@usableFromInline` internals.
-  Hot generic code is `@inlinable`; parameters are `some` generics, never `any`.
-- Copy-on-write: the uniqueness check is inlined and the reallocation slow path is
-  `@inline(never)`. Bulk mutations check uniqueness once, outside the loop.
-- Traps measured in past projects: nested functions capturing mutable locals (boxed, retained
-  per step); generic iterators stored in arrays (use integer cursors); reading a struct out of a
-  class property (copies and retains); lazy maps capturing `self`.
-- Write overflow guards as comparisons (`x <= Int.max / 4`), not a discarded
-  `multipliedReportingOverflow` result.
