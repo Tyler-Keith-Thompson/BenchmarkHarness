@@ -193,9 +193,40 @@ Why a disk image rather than the guest's own root file system, which is case-sen
 container's root file system is deleted at shutdown, so every run would rebuild every dependency.
 The image persists, so a second run of an unchanged package plans and links in about a second.
 It takes host disk space only as the guest writes to it, and only one guest mounts it at a time,
-under the checkout lock. Delete an image to reclaim its space; the next run formats a new one.
+under the checkout lock. It never gives space back when files inside it are deleted; eviction
+(below) deletes whole images, and the next run on that checkout formats a new one.
 A separate scratch per package costs each package one cold build of its dependencies, but two
 packages of a checkout never share a module's build products.
+
+## Keeping the cache bounded (BH-27)
+
+The cache measured 98 GB on the owner's Mac, and nothing deleted any of it: 54 GB of container
+root file systems (`store/containers/benchmark-harness-<pid>`, 4 GiB each) left by runs killed
+before they shut their guest down, 40 GB of scratch directories in `guest/scratch` from before the
+disk images, and an image per checkout, while worktrees come and go.
+
+Each run now evicts (`HarnessCache.evict(limitInBytes:)`) after taking its own checkout lock and
+before formatting its image:
+
+- Beside each checkout's builds, `guest/builds/<checkout>.json` records the checkout's path; a run
+  rewrites it, so its modification time is the checkout's last use. Builds whose checkout no
+  longer exists, or that have no record (made before it), are deleted.
+- Then, while the remaining builds (the image on macOS; `guest/builds/<checkout>` and
+  `guest/work/<checkout>` on Linux) take more than the limit, the least recently used checkout's
+  are deleted. The limit is 50 GiB, `--cache-limit <GiB>` on the command line,
+  `cacheLimitInBytes` on `SimulatedBaselineRecorder`. Sizes count the blocks allocated, so a
+  sparse image counts what has been written to it.
+- Every directory in `guest/scratch` is deleted, and the containers and day-old dumps of runs whose
+  process is no longer running (a reused process identifier keeps its leftovers until that process
+  ends too).
+
+A checkout's builds are deleted only while holding its checkout lock, taken without waiting
+(`CheckoutLock(attempting:)`); one held by a run, this run's own included, is skipped. The lock
+files themselves stay: deleting one would let a run waiting on the old file and a run opening a
+new one both hold the lock. Foundation's `Process` shares even close-on-exec descriptors with a
+child until it executes its program, so a lock released a moment ago can read as held; the
+checkout is then skipped until a later run. Downloads, the kernel, the Valgrind archives and the
+guest files are small and kept.
 
 ## Explicit startMeasurement() and stopMeasurement()
 

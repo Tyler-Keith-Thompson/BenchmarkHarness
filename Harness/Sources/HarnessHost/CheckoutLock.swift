@@ -47,6 +47,39 @@ package final class CheckoutLock: Sendable {
         self.descriptor = descriptor
     }
 
+    /// Acquires the lock on `file`, creating it if needed, unless another holder has it.
+    ///
+    /// Eviction uses it to delete a checkout's builds only while no run is using them.
+    ///
+    /// A child process being spawned shares the descriptor until it executes its program, so a
+    /// lock released a moment ago can still read as held; eviction then skips that checkout until
+    /// a later run.
+    ///
+    /// - Parameter file: The lock file.
+    /// - Returns: `nil` when another holder has the lock, in this process or another.
+    /// - Throws: `CocoaError` when the file can't be opened or locked.
+    package init?(attempting file: URL) throws {
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let descriptor = open(file.path, O_RDWR | O_CREAT | O_CLOEXEC, 0o644)
+        guard descriptor >= 0 else {
+            throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: file.path])
+        }
+        while flock(descriptor, LOCK_EX | LOCK_NB) != 0 {
+            let error = errno
+            guard error == EINTR else {
+                close(descriptor)
+                guard error == EWOULDBLOCK else {
+                    throw CocoaError(.fileLocking, userInfo: [NSFilePathErrorKey: file.path])
+                }
+                return nil
+            }
+        }
+        let holder = Array("\(getpid())\n".utf8)
+        _ = ftruncate(descriptor, 0)
+        _ = holder.withUnsafeBytes { pwrite(descriptor, $0.baseAddress, $0.count, 0) }
+        self.descriptor = descriptor
+    }
+
     deinit {
         close(descriptor)
     }

@@ -42,6 +42,11 @@ public struct SimulatedBaselineRecorder: Sendable {
     /// Callgrind runs a process's threads one at a time, so separate targets are what use the
     /// guest's processors. Simulated counts don't depend on load, so this changes no result.
     public var jobs: Int = 4
+    /// The most the cache's build products may take on disk, in bytes.
+    ///
+    /// Before measuring, a run deletes the builds of checkouts that no longer exist, then the least
+    /// recently used checkouts' builds until they fit, skipping any a run is using.
+    public var cacheLimitInBytes: UInt64 = HarnessCache.defaultLimitInBytes
 
     /// A recorder for the package at `packagePath`.
     public init(packagePath: URL, baselineName: String, cachePath: URL) {
@@ -75,11 +80,17 @@ public struct SimulatedBaselineRecorder: Sendable {
         try FileManager.default.createDirectory(at: shared, withIntermediateDirectories: true)
         // Runs on the same checkout share its staged copy and build products, so they take turns;
         // runs on other checkouts go on at the same time.
-        let lock = try await CheckoutLock(file: shared.appending(path: "locks/\(Self.digest(Data(sourceRoot.path.utf8)).prefix(16)).lock")) { holder in
+        let checkout = String(Self.digest(Data(sourceRoot.path.utf8)).prefix(16))
+        let cache = HarnessCache(path: cachePath)
+        let lock = try await CheckoutLock(file: cache.lockFile(checkout: checkout)) { holder in
             let process = holder.map { " (process \($0))" } ?? ""
             FileHandle.standardError.write(Data("Waiting for another run on \(sourceRoot.path)\(process)\n".utf8))
         }
         defer { withExtendedLifetime(lock) {} }
+        // Recorded first, so eviction counts this checkout as the most recently used; it holds the
+        // lock, so its own builds are never evicted.
+        try cache.recordUse(checkout: checkout, source: sourceRoot)
+        cache.evict(limitInBytes: cacheLimitInBytes)
         let files = try Self.installGuestFiles(in: shared)
         // Each run has its own dumps, so concurrent runs never read each other's.
         let run = "\(ProcessInfo.processInfo.processIdentifier)-\(UUID().uuidString.prefix(8))"
@@ -87,7 +98,6 @@ public struct SimulatedBaselineRecorder: Sendable {
         let valgrindSource = try await PinnedDownload.valgrindSource.fetch(into: shared.appending(path: "downloads"))
         let patch = try Data(contentsOf: files.appending(path: "valgrind.patch"))
         let valgrindBuild = "valgrind-3.28.0-\(Self.digest(patch).prefix(12))"
-        let checkout = String(Self.digest(Data(sourceRoot.path.utf8)).prefix(16))
         // Build products used to be kept here, a directory per checkout on the shared volume.
         try? FileManager.default.removeItem(at: shared.appending(path: "scratch/\(checkout)"))
 

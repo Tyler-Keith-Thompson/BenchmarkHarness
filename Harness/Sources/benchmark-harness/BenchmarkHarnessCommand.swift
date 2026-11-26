@@ -60,6 +60,9 @@ struct Update: AsyncParsableCommand {
     @Option(help: "Where downloads, images and build products are cached.")
     var cachePath: String = SimulatedBaselineRecorder.defaultCachePath.path
 
+    @Option(help: "The most the cached build products may take, in GiB; least recently used checkouts' builds are deleted over it.")
+    var cacheLimit: Int = 50
+
     func validate() throws {
         // BenchmarkBaseline(baselineName:) checks the same rule, but only once every benchmark has
         // been measured; checking here fails before the run starts.
@@ -69,6 +72,7 @@ struct Update: AsyncParsableCommand {
         guard cpus > 0 else { throw ValidationError("--cpus must be at least 1.") }
         guard (jobs ?? 1) > 0 else { throw ValidationError("--jobs must be at least 1.") }
         guard iterations > 0 else { throw ValidationError("--iterations must be at least 1.") }
+        guard cacheLimit >= 0 else { throw ValidationError("--cache-limit must not be negative.") }
     }
 
     func run() async throws {
@@ -83,6 +87,7 @@ struct Update: AsyncParsableCommand {
         recorder.cpus = cpus
         recorder.memoryGiB = memory
         recorder.iterations = iterations
+        recorder.cacheLimitInBytes = UInt64(cacheLimit) << 30
         #if os(Linux)
         recorder.jobs = jobs ?? ProcessInfo.processInfo.activeProcessorCount
         #else

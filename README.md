@@ -93,7 +93,9 @@ of machine and committing `.benchmarkBaselines/`.
 Swift image) and builds Valgrind, once. Later runs reuse the cache in
 `~/Library/Caches/BenchmarkHarness` on macOS and `~/.cache/BenchmarkHarness` on Linux. Build
 products sit in its `guest/builds`, one entry per checkout (on macOS a sparse disk image, which
-grows as builds write to it); delete one to reclaim its space. On Linux,
+grows as builds write to it). Each run deletes the builds of checkouts that no longer exist, then
+the least recently used checkouts' builds until all of them take at most 50 GiB
+(`--cache-limit <GiB>` changes it). Builds a run is using are never deleted. On Linux,
 building Valgrind needs `make`, `gcc`, the C library headers, `bzip2` and `patch`; run as root
 with `apt-get`, as in a `swift` container, the tool installs them itself.
 

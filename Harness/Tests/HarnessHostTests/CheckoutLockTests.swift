@@ -69,4 +69,20 @@ struct CheckoutLockTests {
         await #expect(throws: CancellationError.self) { try await waiter.value }
         withExtendedLifetime(holder) {}
     }
+
+    @Test("Attempting a lock another holder has gives nil without waiting; a free one is acquired")
+    func attempting() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "checkout-lock-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let held = directory.appending(path: "a.lock")
+        let free = directory.appending(path: "b.lock")
+        let holder = try await CheckoutLock(file: held)
+
+        let whileHeld = try CheckoutLock(attempting: held)
+        let freeLock = try CheckoutLock(attempting: free)
+
+        withExtendedLifetime(holder) {}
+        #expect(whileHeld == nil)
+        #expect(freeLock != nil)
+    }
 }
