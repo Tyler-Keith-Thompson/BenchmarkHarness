@@ -20,12 +20,15 @@ public struct BenchmarkResult: Equatable, Sendable, Codable {
     /// - Parameters:
     ///   - metric: The metric measured.
     ///   - measurements: One value per measured iteration.
-    ///   - warmupIterations: The iterations run before measuring began. Traps when negative.
+    ///   - warmupIterations: The iterations run before measuring began.
     /// Each measurement covers one iteration: the ``scalingFactor`` is 1.
     ///
+    /// - Throws: ``NegativeWarmupIterations`` when `warmupIterations` is negative.
     /// - Complexity: O(*n*), where *n* is the number of measurements.
-    public init(metric: BenchmarkMetric, measurements: some Sequence<UInt64>, warmupIterations: Int) {
-        precondition(warmupIterations >= 0, "Warmup iterations cannot be negative")
+    public init(
+        metric: BenchmarkMetric, measurements: some Sequence<UInt64>, warmupIterations: Int
+    ) throws(NegativeWarmupIterations) {
+        guard warmupIterations >= 0 else { throw NegativeWarmupIterations() }
         self.metric = metric
         self.statistics = Statistics(measurements: measurements, prefersLarger: metric.prefersLarger)
         self.warmupIterations = warmupIterations

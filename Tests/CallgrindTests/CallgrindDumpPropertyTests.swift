@@ -19,23 +19,27 @@ struct CallgrindDumpPropertyTests {
             let written = totals.dropLast(min(omitted, totals.count))
             let text = "events: \(events.map(\.rawValue).joined(separator: " "))\n"
                 + "totals: \(written.map(String.init).joined(separator: " "))\n"
-            let dump = CallgrindDump(text: text)
+            let dump = try CallgrindDump(text: text)
             #expect(dump.events == Array(events))
             for (index, event) in events.enumerated() {
                 let expected = index < written.count ? totals[index] : 0
-                #expect(dump[event] == expected)
+                #expect(dump.totals[event] == expected)
             }
         }
     }
 
     @Test("A seeded generator reproduces the same dumps", .tags(.randomized))
-    func seededReproducibility() {
+    func seededReproducibility() throws {
         var first = Xoroshiro128Plus(seed: 7)
         var second = Xoroshiro128Plus(seed: 7)
         func text(_ generator: inout Xoroshiro128Plus) -> String {
             let values = (0 ..< 4).map { _ in Int.random(in: 0 ... 1000, using: &generator) }
             return "events: Ir Dr Dw Bc\ntotals: \(values.map(String.init).joined(separator: " "))\n"
         }
-        #expect(CallgrindDump(text: text(&first)) == CallgrindDump(text: text(&second)))
+        let expected = try CallgrindDump(text: text(&first))
+
+        let actual = try CallgrindDump(text: text(&second))
+
+        #expect(actual == expected)
     }
 }

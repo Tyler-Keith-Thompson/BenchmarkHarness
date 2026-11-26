@@ -268,7 +268,7 @@ public struct SimulatedBaselineRecorder: Sendable {
             results[BenchmarkIdentifier(target: unit.target, name: unit.benchmark.name)] = benchmarkResults
         }
 
-        let baseline = BenchmarkBaseline(
+        let baseline = try BenchmarkBaseline(
             baselineName: baselineName,
             machine: BenchmarkMachine(
                 hostname: "benchmark-harness",
@@ -345,7 +345,7 @@ public struct SimulatedBaselineRecorder: Sendable {
         var overhead: [CallgrindDump] = []
         for (_, name) in numbered {
             let file = directory.appending(path: name)
-            let dump = try CallgrindDump(checkedText: String(decoding: try Data(contentsOf: file), as: UTF8.self))
+            let dump = try CallgrindDump(text: String(decoding: try Data(contentsOf: file), as: UTF8.self))
             guard SimulatedMetric.requiredEvents.isSubset(of: Set(dump.events)) else { throw MalformedCallgrindDump() }
             switch dump.trigger {
             case "Client Request: iteration": iterations.append(dump)
@@ -359,7 +359,8 @@ public struct SimulatedBaselineRecorder: Sendable {
 
     static func report(_ identifier: BenchmarkIdentifier, iterations: [CallgrindDump], overhead: [CallgrindDump], elapsed: Duration, results: [BenchmarkResult]) {
         let values = results.map { "\($0.metric.name) \($0.statistics.valueAtPercentile(50))" }
-        let overheadInstructions = overhead.map { SimulatedMetric.instructions.value(in: $0) }.sorted()
+        // readDumps checked that every dump counts each required event, so no value is missing.
+        let overheadInstructions = overhead.compactMap { try? SimulatedMetric.instructions.value(in: $0) }.sorted()
         let windowCost = overheadInstructions.isEmpty ? 0 : overheadInstructions[(overheadInstructions.count - 1) / 2]
         // Unbuffered, so progress shows while a long run continues.
         FileHandle.standardOutput.write(Data(("\(identifier.target): \(identifier.name) (\(iterations.count) iterations in \(elapsed.formatted(.units(allowed: [.minutes, .seconds], width: .narrow))), p50, less \(windowCost) instructions of measuring) — \(values.joined(separator: ", "))" + "\n").utf8))

@@ -6,18 +6,19 @@
 /// dump names has a total, zero when omitted. A `desc: Trigger:` line says what wrote the dump.
 ///
 /// ```swift
-/// let dump = CallgrindDump(text: """
+/// let dump = try CallgrindDump(text: """
 ///     events: Ir Dr Dw
 ///     totals: 1200 300
 ///     """)
-/// dump[.instructionCacheReads]  // 1200
-/// dump[.dataCacheWrites]        // 0
+/// dump.totals[.instructionCacheReads]  // 1200
+/// dump.totals[.dataCacheWrites]        // 0
+/// dump.totals[.conditionalBranches]    // nil: the dump does not count it
 /// ```
 @frozen
 public struct CallgrindDump: Hashable, Sendable {
     /// The events the dump counts, in the order of its `events:` line.
     public let events: [CallgrindEvent]
-    /// The total of each event in ``events``.
+    /// The total of each event in ``events``; an event the dump does not count has none.
     public let totals: [CallgrindEvent: Int]
     /// What wrote the dump, such as `Client Request: iteration 3` for a
     /// `CALLGRIND_DUMP_STATS_AT("iteration 3")` request, or `nil` when the dump does not say.
@@ -25,25 +26,11 @@ public struct CallgrindDump: Hashable, Sendable {
 
     /// The dump parsed from the text of a Callgrind output file.
     ///
-    /// - Parameter text: The file's contents. Traps when it has no `events:` line, no `totals:`
-    ///   or `summary:` line, more totals than events, or a total that is not a non-negative
-    ///   integer; use ``init(checkedText:)`` to throw instead.
-    /// - Complexity: O(*n*), where *n* is the length of `text`.
-    public init(text: some StringProtocol) {
-        do {
-            try self.init(checkedText: text)
-        } catch {
-            preconditionFailure("Malformed Callgrind dump")
-        }
-    }
-
-    /// The dump parsed from the text of a Callgrind output file.
-    ///
     /// - Parameter text: The file's contents.
     /// - Throws: ``MalformedCallgrindDump`` when the text has no `events:` line, no `totals:` or
     ///   `summary:` line, more totals than events, or a total that is not a non-negative integer.
     /// - Complexity: O(*n*), where *n* is the length of `text`.
-    public init(checkedText text: some StringProtocol) throws(MalformedCallgrindDump) {
+    public init(text: some StringProtocol) throws(MalformedCallgrindDump) {
         var events: [CallgrindEvent]?
         var totals: [Substring]?
         var summary: [Substring]?
@@ -76,24 +63,13 @@ public struct CallgrindDump: Hashable, Sendable {
         self.trigger = trigger
     }
 
-    /// The total of `event`.
-    ///
-    /// - Parameter event: An event in ``events``. Traps for an event the dump does not count.
-    /// - Complexity: O(1).
-    public subscript(event: CallgrindEvent) -> Int {
-        guard let total = totals[event] else {
-            preconditionFailure("The dump does not count \(event.rawValue)")
-        }
-        return total
-    }
-
     private static func fields(of line: Substring, key: String) -> [Substring]? {
         guard line.hasPrefix(key) else { return nil }
         return line.dropFirst(key.count).split(whereSeparator: \.isWhitespace)
     }
 }
 
-/// The error ``CallgrindDump/init(checkedText:)`` throws for text that is not a Callgrind dump.
+/// The error ``CallgrindDump/init(text:)`` throws for text that is not a Callgrind dump.
 @frozen
 public struct MalformedCallgrindDump: Error, Hashable, Sendable {
     @inlinable

@@ -6,13 +6,13 @@
 /// checks thresholds against.
 ///
 /// ```swift
-/// let baseline = BenchmarkBaseline(
+/// let baseline = try BenchmarkBaseline(
 ///     baselineName: "main",
 ///     machine: BenchmarkMachine(hostname: "guest", processors: 8, processorType: "aarch64",
 ///                               memory: 8, kernelVersion: "6.12.28"),
 ///     results: [
 ///         BenchmarkIdentifier(target: "SortBenchmarks", name: "Sort 1000"): [
-///             BenchmarkResult(metric: .instructions, measurements: [206_978, 206_981],
+///             try BenchmarkResult(metric: .instructions, measurements: [206_978, 206_981],
 ///                             warmupIterations: 1),
 ///         ],
 ///     ]
@@ -31,11 +31,18 @@ public struct BenchmarkBaseline: Equatable, Sendable, Encodable {
     /// A baseline holding `results`.
     ///
     /// - Parameters:
-    ///   - baselineName: The baseline's name. Traps when empty or when it contains `/`.
+    ///   - baselineName: The baseline's name: one non-empty path component.
     ///   - machine: The machine the results were measured on.
     ///   - results: The results of each benchmark, one per metric.
-    public init(baselineName: String, machine: BenchmarkMachine, results: [BenchmarkIdentifier: [BenchmarkResult]]) {
-        precondition(!baselineName.isEmpty && !baselineName.contains("/"), "A baseline name is one non-empty path component")
+    /// - Throws: ``InvalidBaselineName`` when `baselineName` is empty or contains `/`.
+    public init(
+        baselineName: String, machine: BenchmarkMachine, results: [BenchmarkIdentifier: [BenchmarkResult]]
+    ) throws(InvalidBaselineName) {
+        guard !baselineName.isEmpty, !baselineName.contains("/") else { throw InvalidBaselineName() }
+        self.init(validName: baselineName, machine: machine, results: results)
+    }
+
+    private init(validName baselineName: String, machine: BenchmarkMachine, results: [BenchmarkIdentifier: [BenchmarkResult]]) {
         self.baselineName = baselineName
         self.machine = machine
         self.results = results
@@ -56,8 +63,9 @@ public struct BenchmarkBaseline: Equatable, Sendable, Encodable {
     /// benchmark target, keyed by target name.
     public var byTarget: [String: BenchmarkBaseline] {
         Dictionary(grouping: results, by: \.key.target).mapValues { entries in
+            // This baseline's name was checked when it was made.
             BenchmarkBaseline(
-                baselineName: baselineName,
+                validName: baselineName,
                 machine: machine,
                 results: Dictionary(uniqueKeysWithValues: entries.map { ($0.key, $0.value) })
             )

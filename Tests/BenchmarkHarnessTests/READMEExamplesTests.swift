@@ -8,17 +8,17 @@ import Testing
 struct READMEExamplesTests {
     @Test("Usage")
     func usage() throws {
-        let iterations = [
+        let iterations = try [
             CallgrindDump(text: "events: Ir I1mr D1mr D1mw ILmr DLmr DLmw Bcm Bim\ntotals: 4100 2 9 3 0 1 0 12\n"),
             CallgrindDump(text: "events: Ir I1mr D1mr D1mw ILmr DLmr DLmw Bcm Bim\ntotals: 4100 0 8 3 0 0 0 12\n"),
         ]
-        let overhead = [
+        let overhead = try [
             CallgrindDump(text: "events: Ir I1mr D1mr D1mw ILmr DLmr DLmw Bcm Bim\ntotals: 100\n"),
         ]
-        let results = SimulatedMetric.allCases.map { metric in
-            BenchmarkResult(metric: metric, iterations: iterations, overhead: overhead, warmupIterations: 1)
+        let results = try SimulatedMetric.allCases.map { metric in
+            try BenchmarkResult(metric: metric, iterations: iterations, overhead: overhead, warmupIterations: 1)
         }
-        let baseline = BenchmarkBaseline(
+        let baseline = try BenchmarkBaseline(
             baselineName: "main",
             machine: BenchmarkMachine(hostname: "guest", processors: 8, processorType: "aarch64",
                                       memory: 8, kernelVersion: "6.12.28"),
@@ -33,14 +33,14 @@ struct READMEExamplesTests {
     }
 
     @Test("Documentation overview")
-    func overview() {
-        let iterations = [
+    func overview() throws {
+        let iterations = try [
             CallgrindDump(text: "events: Ir I1mr D1mr D1mw ILmr DLmr DLmw Bcm Bim\ntotals: 4100 2 9 3 0 1 0 12\n"),
         ]
-        let overhead = [
+        let overhead = try [
             CallgrindDump(text: "events: Ir I1mr D1mr D1mw ILmr DLmr DLmw Bcm Bim\ntotals: 100\n"),
         ]
-        let result = BenchmarkResult(metric: .instructions, iterations: iterations, overhead: overhead, warmupIterations: 0)
+        let result = try BenchmarkResult(metric: .instructions, iterations: iterations, overhead: overhead, warmupIterations: 0)
         print(result.statistics.valueAtPercentile(50))  // 4000
 
         let expected: UInt64 = 4000

@@ -14,7 +14,7 @@ import Testing
 struct BenchmarkBaselineTests {
     @Test("A result encodes as ordo-one/benchmark 1.38.0 encodes the same measurements", .tags(.fixture))
     func resultMatchesOrdoOne() throws {
-        let result = BenchmarkResult(
+        let result = try BenchmarkResult(
             metric: .custom("Large count"),
             measurements: repeatElement(UInt64(123_456_789), count: 5),
             warmupIterations: 1
@@ -64,7 +64,7 @@ struct BenchmarkBaselineTests {
 
     @Test("Small measurements display in count units, as ordo-one/benchmark 1.38.0 does", .tags(.fixture))
     func smallResultMatchesOrdoOne() throws {
-        let result = BenchmarkResult(
+        let result = try BenchmarkResult(
             metric: .custom("Example count"),
             measurements: repeatElement(UInt64(42), count: 5),
             warmupIterations: 1
@@ -105,7 +105,7 @@ struct BenchmarkBaselineTests {
         let machine = BenchmarkMachine(hostname: "guest", processors: 8, processorType: "aarch64", memory: 8, kernelVersion: "6.12.28")
         let later = BenchmarkIdentifier(target: "B", name: "a")
         let earlier = BenchmarkIdentifier(target: "A", name: "z")
-        let baseline = BenchmarkBaseline(
+        let baseline = try BenchmarkBaseline(
             baselineName: "main",
             machine: machine,
             results: [
@@ -139,20 +139,20 @@ struct BenchmarkBaselineTests {
     @Test("An empty baseline encodes an empty results array")
     func emptyBaseline() throws {
         let machine = BenchmarkMachine(hostname: "h", processors: 1, processorType: "aarch64", memory: 1, kernelVersion: "k")
-        let baseline = BenchmarkBaseline(baselineName: "empty", machine: machine, results: [:])
+        let baseline = try BenchmarkBaseline(baselineName: "empty", machine: machine, results: [:])
         let object = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(baseline)) as? [String: Any])
         #expect((object["results"] as? [Any])?.isEmpty == true)
         #expect(baseline.byTarget.isEmpty)
     }
 
     @Test("byTarget splits a baseline into one per benchmark target")
-    func byTarget() {
+    func byTarget() throws {
         let machine = BenchmarkMachine(hostname: "h", processors: 1, processorType: "aarch64", memory: 1, kernelVersion: "k")
         let a1 = BenchmarkIdentifier(target: "A", name: "1")
         let a2 = BenchmarkIdentifier(target: "A", name: "2")
         let b1 = BenchmarkIdentifier(target: "B", name: "1")
-        let result = [BenchmarkResult(metric: .instructions, measurements: [5], warmupIterations: 0)]
-        let baseline = BenchmarkBaseline(baselineName: "main", machine: machine, results: [a1: result, a2: result, b1: result])
+        let result = try [BenchmarkResult(metric: .instructions, measurements: [5], warmupIterations: 0)]
+        let baseline = try BenchmarkBaseline(baselineName: "main", machine: machine, results: [a1: result, a2: result, b1: result])
         let split = baseline.byTarget
         #expect(split.keys.sorted() == ["A", "B"])
         #expect(split["A"]?.results.keys.sorted() == [a1, a2])
@@ -181,22 +181,37 @@ struct BenchmarkBaselineTests {
         #expect(identifiers.sorted() == expected)
     }
 
-    @Test("A baseline name that is empty or holds a slash traps", .tags(.precondition))
-    func badNamesTrap() async {
-        await #expect(processExitsWith: .failure) {
-            let machine = BenchmarkMachine(hostname: "h", processors: 1, processorType: "a", memory: 1, kernelVersion: "k")
-            _ = BenchmarkBaseline(baselineName: "", machine: machine, results: [:])
-        }
-        await #expect(processExitsWith: .failure) {
-            let machine = BenchmarkMachine(hostname: "h", processors: 1, processorType: "a", memory: 1, kernelVersion: "k")
-            _ = BenchmarkBaseline(baselineName: "a/b", machine: machine, results: [:])
+    @Test("A baseline name that is empty or holds a slash throws InvalidBaselineName")
+    func badNamesThrow() {
+        let machine = BenchmarkMachine(hostname: "h", processors: 1, processorType: "a", memory: 1, kernelVersion: "k")
+        let names = ["", "/", "a/b", "a/"]
+
+        for name in names {
+            #expect(throws: InvalidBaselineName(), "\(name)") {
+                try BenchmarkBaseline(baselineName: name, machine: machine, results: [:])
+            }
         }
     }
 
-    @Test("Negative warmup iterations trap", .tags(.precondition))
-    func negativeWarmupTraps() async {
-        await #expect(processExitsWith: .failure) {
-            _ = BenchmarkResult(metric: .instructions, measurements: [1], warmupIterations: -1)
+    @Test("A one-character name is a valid baseline name")
+    func oneCharacterName() throws {
+        let machine = BenchmarkMachine(hostname: "h", processors: 1, processorType: "a", memory: 1, kernelVersion: "k")
+        let expected = "x"
+
+        let actual = try BenchmarkBaseline(baselineName: "x", machine: machine, results: [:])
+
+        #expect(actual.baselineName == expected)
+    }
+
+    @Test("Negative warmup iterations throw NegativeWarmupIterations; zero is accepted")
+    func negativeWarmupThrows() throws {
+        let expected = 0
+
+        let actual = try BenchmarkResult(metric: .instructions, measurements: [1], warmupIterations: 0)
+
+        #expect(actual.warmupIterations == expected)
+        #expect(throws: NegativeWarmupIterations()) {
+            try BenchmarkResult(metric: .instructions, measurements: [1], warmupIterations: -1)
         }
     }
 }

@@ -34,22 +34,34 @@ public enum SimulatedMetric: Hashable, Sendable, CaseIterable {
 
     /// The metric's value in `dump`.
     ///
-    /// - Parameter dump: A dump counting every event in ``requiredEvents``. Traps otherwise.
+    /// - Parameter dump: A dump counting every event in ``requiredEvents``.
+    /// - Throws: ``MissingRequiredEvent`` when the dump does not count an event the metric reads.
     /// - Complexity: O(1).
-    public func value(in dump: CallgrindDump) -> UInt64 {
-        let level1 = dump[.level1InstructionCacheReadMisses] + dump[.level1DataCacheReadMisses]
-            + dump[.level1DataCacheWriteMisses]
-        let lastLevel = dump[.lastLevelInstructionCacheReadMisses] + dump[.lastLevelDataCacheReadMisses]
-            + dump[.lastLevelDataCacheWriteMisses]
-        let branches = dump[.conditionalBranchMispredictions] + dump[.indirectBranchMispredictions]
-        let value = switch self {
-        case .instructions: dump[.instructionCacheReads]
-        case .level1MissSum: level1
-        case .lastLevelMissSum: lastLevel
-        case .mispredictedBranches: branches
-        case .cycleEstimation: dump[.instructionCacheReads] + 10 * branches + 10 * level1 + 100 * lastLevel
+    public func value(in dump: CallgrindDump) throws(MissingRequiredEvent) -> UInt64 {
+        let totals = dump.totals
+        func total(_ event: CallgrindEvent) throws(MissingRequiredEvent) -> UInt64 {
+            guard let total = totals[event] else { throw MissingRequiredEvent() }
+            return UInt64(total)
         }
-        return UInt64(value)
+        // Each case reads only its own events: a lookup that can throw is never dead code, so
+        // reading all nine for every metric would cost each one the others' lookups.
+        return switch self {
+        case .instructions:
+            try total(.instructionCacheReads)
+        case .level1MissSum:
+            try total(.level1InstructionCacheReadMisses) + total(.level1DataCacheReadMisses)
+                + total(.level1DataCacheWriteMisses)
+        case .lastLevelMissSum:
+            try total(.lastLevelInstructionCacheReadMisses) + total(.lastLevelDataCacheReadMisses)
+                + total(.lastLevelDataCacheWriteMisses)
+        case .mispredictedBranches:
+            try total(.conditionalBranchMispredictions) + total(.indirectBranchMispredictions)
+        case .cycleEstimation:
+            try total(.instructionCacheReads)
+                + 10 * SimulatedMetric.mispredictedBranches.value(in: dump)
+                + 10 * SimulatedMetric.level1MissSum.value(in: dump)
+                + 100 * SimulatedMetric.lastLevelMissSum.value(in: dump)
+        }
     }
 
     /// The ordo-one/benchmark metric the values are stored as.
@@ -76,21 +88,30 @@ extension BenchmarkResult {
     ///   - metric: The simulated metric.
     ///   - iterations: One dump per measured iteration.
     ///   - overhead: Dumps of empty measurement windows; when empty, nothing is subtracted.
-    ///   - warmupIterations: The iterations run before measuring began. Traps when negative.
-    ///
-    ///   Every dump must count each event in ``SimulatedMetric/requiredEvents``; traps otherwise.
+    ///   - warmupIterations: The iterations run before measuring began.
+    /// - Throws: ``InvalidSimulatedResult/missingRequiredEvent`` when a dump does not count an
+    ///   event `metric` reads (one of ``SimulatedMetric/requiredEvents``), and
+    ///   ``InvalidSimulatedResult/negativeWarmupIterations`` when `warmupIterations` is negative.
     /// - Complexity: O(*n* + *m* log *m*), where *n* is the number of iterations and *m* the
     ///   number of overhead dumps.
-    public init(metric: SimulatedMetric, iterations: [CallgrindDump], overhead: [CallgrindDump], warmupIterations: Int) {
-        let overheadValues = overhead.map(metric.value(in:)).sorted()
-        let median = overheadValues.isEmpty ? 0 : overheadValues[(overheadValues.count - 1) / 2]
-        self.init(
-            metric: metric.benchmarkMetric,
-            measurements: iterations.map { dump in
-                let value = metric.value(in: dump)
+    public init(
+        metric: SimulatedMetric, iterations: [CallgrindDump], overhead: [CallgrindDump], warmupIterations: Int
+    ) throws(InvalidSimulatedResult) {
+        let measurements: [UInt64]
+        do {
+            let overheadValues = try overhead.map(metric.value(in:)).sorted()
+            let median = overheadValues.isEmpty ? 0 : overheadValues[(overheadValues.count - 1) / 2]
+            measurements = try iterations.map { dump throws(MissingRequiredEvent) in
+                let value = try metric.value(in: dump)
                 return value > median ? value - median : 0
-            },
-            warmupIterations: warmupIterations
-        )
+            }
+        } catch {
+            throw .missingRequiredEvent
+        }
+        do {
+            try self.init(metric: metric.benchmarkMetric, measurements: measurements, warmupIterations: warmupIterations)
+        } catch {
+            throw .negativeWarmupIterations
+        }
     }
 }

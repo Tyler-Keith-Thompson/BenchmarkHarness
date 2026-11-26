@@ -48,7 +48,7 @@ struct BenchmarkCommandTests {
 
     @Test("A result reply decodes each result it carries")
     func resultReply() throws {
-        let results = [
+        let results = try [
             BenchmarkResult(metric: .mallocCountTotal, measurements: [12, 12, 12], warmupIterations: 1),
             BenchmarkResult(metric: .custom("Graph bytes"), measurements: [4096], warmupIterations: 1),
         ]

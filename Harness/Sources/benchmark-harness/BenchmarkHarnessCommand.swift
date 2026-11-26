@@ -61,6 +61,11 @@ struct Update: AsyncParsableCommand {
     var cachePath: String = SimulatedBaselineRecorder.defaultCachePath.path
 
     func validate() throws {
+        // BenchmarkBaseline(baselineName:) checks the same rule, but only once every benchmark has
+        // been measured; checking here fails before the run starts.
+        guard !baselineName.isEmpty, !baselineName.contains("/") else {
+            throw ValidationError("The baseline name must be one path component: not empty, with no '/'.")
+        }
         guard cpus > 0 else { throw ValidationError("--cpus must be at least 1.") }
         guard (jobs ?? 1) > 0 else { throw ValidationError("--jobs must be at least 1.") }
         guard iterations > 0 else { throw ValidationError("--iterations must be at least 1.") }

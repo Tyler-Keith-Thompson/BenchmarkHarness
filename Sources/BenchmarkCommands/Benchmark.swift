@@ -52,6 +52,10 @@ public struct Benchmark: Hashable, Sendable {
               }(),
               let benchmark = try? Benchmark(json: replaced)
         else {
+            // Can't fire: init(json:) decoded `json` as an object whose `configuration` is an
+            // object, which JSONSerialization reads back as dictionaries; BenchmarkMetric's
+            // synthesized Encodable has no failing case; and the rewritten JSON keeps `name`,
+            // replaces `metrics` with metrics that decode, and leaves every other key as decoded.
             preconditionFailure("A benchmark's JSON was validated when it was decoded")
         }
         return benchmark

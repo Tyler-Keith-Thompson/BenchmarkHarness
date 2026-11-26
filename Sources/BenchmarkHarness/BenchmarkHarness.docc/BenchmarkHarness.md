@@ -18,13 +18,13 @@ imported on its own.
 ```swift
 import BenchmarkHarness
 
-let iterations = [
+let iterations = try [
     CallgrindDump(text: "events: Ir I1mr D1mr D1mw ILmr DLmr DLmw Bcm Bim\ntotals: 4100 2 9 3 0 1 0 12\n"),
 ]
-let overhead = [
+let overhead = try [
     CallgrindDump(text: "events: Ir I1mr D1mr D1mw ILmr DLmr DLmw Bcm Bim\ntotals: 100\n"),
 ]
-let result = BenchmarkResult(metric: .instructions, iterations: iterations, overhead: overhead, warmupIterations: 0)
+let result = try BenchmarkResult(metric: .instructions, iterations: iterations, overhead: overhead, warmupIterations: 0)
 print(result.statistics.valueAtPercentile(50))  // 4000
 ```
 

@@ -40,7 +40,7 @@ let benchmarks: @Sendable () -> Void = {
 
     Benchmark("Callgrind: CallgrindDump(text:)") { benchmark in
         for _ in benchmark.scaledIterations {
-            blackHole(CallgrindDump(text: text))
+            blackHole(try CallgrindDump(text: text))
         }
     }
 }

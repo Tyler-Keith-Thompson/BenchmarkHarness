@@ -55,8 +55,8 @@ struct BenchmarkProcess<Runner: Machine>: Sendable {
                 }
             }
             let (iterations, overhead) = try SimulatedBaselineRecorder.readDumps(in: dumps)
-            let results = SimulatedMetric.allCases.map { metric in
-                BenchmarkResult(metric: metric, iterations: iterations, overhead: overhead, warmupIterations: benchmark.warmupIterations)
+            let results = try SimulatedMetric.allCases.map { metric in
+                try BenchmarkResult(metric: metric, iterations: iterations, overhead: overhead, warmupIterations: benchmark.warmupIterations)
             }
             SimulatedBaselineRecorder.report(
                 BenchmarkIdentifier(target: target, name: benchmark.name),

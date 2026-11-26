@@ -50,14 +50,14 @@ struct BenchmarkResultDecodingTests {
 
     @Test("A result decodes back to the result it was encoded from")
     func roundTrip() throws {
-        let result = BenchmarkResult(metric: .mallocCountTotal, measurements: [3, 3, 4, 7], warmupIterations: 2)
+        let result = try BenchmarkResult(metric: .mallocCountTotal, measurements: [3, 3, 4, 7], warmupIterations: 2)
         let decoded = try JSONDecoder().decode(BenchmarkResult.self, from: JSONEncoder().encode(result))
         #expect(decoded == result)
     }
 
     @Test("A decoded scaling factor is kept and encoded again")
     func keepsScalingFactor() throws {
-        let result = BenchmarkResult(metric: .retainCount, measurements: [1000], warmupIterations: 0)
+        let result = try BenchmarkResult(metric: .retainCount, measurements: [1000], warmupIterations: 0)
         var object = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(result)) as? [String: Any])
         object["scalingFactor"] = 1000
         let decoded = try JSONDecoder().decode(BenchmarkResult.self, from: JSONSerialization.data(withJSONObject: object))
@@ -69,7 +69,7 @@ struct BenchmarkResultDecodingTests {
 
     @Test("A results' scaling factor that ordo-one/benchmark does not define, or a negative warmup, throws")
     func rejectsInvalidFields() throws {
-        let result = BenchmarkResult(metric: .instructions, measurements: [1], warmupIterations: 0)
+        let result = try BenchmarkResult(metric: .instructions, measurements: [1], warmupIterations: 0)
         let encoded = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(result)) as? [String: Any])
         for (key, value) in [("scalingFactor", 0), ("scalingFactor", 10), ("scalingFactor", -1), ("warmupIterations", -1)] {
             var object = encoded
@@ -83,7 +83,7 @@ struct BenchmarkResultDecodingTests {
 
     @Test("Every scaling factor ordo-one/benchmark defines, from one to tera, decodes", .tags(.exhaustive))
     func everyScalingFactor() throws {
-        let result = BenchmarkResult(metric: .instructions, measurements: [1], warmupIterations: 0)
+        let result = try BenchmarkResult(metric: .instructions, measurements: [1], warmupIterations: 0)
         let encoded = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(result)) as? [String: Any])
         for factor in [1, 1_000, 1_000_000, 1_000_000_000, 1_000_000_000_000] {
             var object = encoded

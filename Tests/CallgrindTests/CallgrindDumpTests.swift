@@ -37,7 +37,7 @@ struct CallgrindDumpTests {
 
             totals: 3255 778 340 36 12 4 16 1 1 599 38 52 2
             """
-        let dump = try CallgrindDump(checkedText: text)
+        let dump = try CallgrindDump(text: text)
         let expectedEvents: [CallgrindEvent] = [
             .instructionCacheReads, .dataCacheReads, .dataCacheWrites,
             .level1InstructionCacheReadMisses, .level1DataCacheReadMisses, .level1DataCacheWriteMisses,
@@ -49,41 +49,41 @@ struct CallgrindDumpTests {
         let indirectMispredictions = 2
         #expect(dump.events == expectedEvents)
         #expect(dump.trigger == expectedTrigger)
-        #expect(dump[.instructionCacheReads] == instructions)
-        #expect(dump[.indirectBranchMispredictions] == indirectMispredictions)
+        #expect(dump.totals[.instructionCacheReads] == instructions)
+        #expect(dump.totals[.indirectBranchMispredictions] == indirectMispredictions)
     }
 
     @Test("Totals omitted at the end of the line are zero")
-    func omittedTrailingTotals() {
-        let dump = CallgrindDump(text: "events: Ir Dr Dw\ntotals: 1200 300\n")
+    func omittedTrailingTotals() throws {
+        let dump = try CallgrindDump(text: "events: Ir Dr Dw\ntotals: 1200 300\n")
         let reads = 1200
         let dataReads = 300
         let writes = 0
-        #expect(dump[.instructionCacheReads] == reads)
-        #expect(dump[.dataCacheReads] == dataReads)
-        #expect(dump[.dataCacheWrites] == writes)
+        #expect(dump.totals[.instructionCacheReads] == reads)
+        #expect(dump.totals[.dataCacheReads] == dataReads)
+        #expect(dump.totals[.dataCacheWrites] == writes)
     }
 
     @Test("A totals line with no values gives every event a total of zero")
-    func emptyTotals() {
-        let dump = CallgrindDump(text: "events: Ir Bcm\ntotals:\n")
+    func emptyTotals() throws {
+        let dump = try CallgrindDump(text: "events: Ir Bcm\ntotals:\n")
         let expected: [CallgrindEvent: Int] = [.instructionCacheReads: 0, .conditionalBranchMispredictions: 0]
         #expect(dump.totals == expected)
     }
 
     @Test("The summary line stands in for a missing totals line, and totals win over it")
-    func summaryFallback() {
-        let summaryOnly = CallgrindDump(text: "events: Ir\nsummary: 7\n")
-        let both = CallgrindDump(text: "events: Ir\nsummary: 7\ntotals: 9\n")
+    func summaryFallback() throws {
+        let summaryOnly = try CallgrindDump(text: "events: Ir\nsummary: 7\n")
+        let both = try CallgrindDump(text: "events: Ir\nsummary: 7\ntotals: 9\n")
         let fromSummary = 7
         let fromTotals = 9
-        #expect(summaryOnly[.instructionCacheReads] == fromSummary)
-        #expect(both[.instructionCacheReads] == fromTotals)
+        #expect(summaryOnly.totals[.instructionCacheReads] == fromSummary)
+        #expect(both.totals[.instructionCacheReads] == fromTotals)
     }
 
     @Test("A dump with one event parses, and an event the dump does not name is absent")
-    func oneEvent() {
-        let dump = CallgrindDump(text: "events: Ir\ntotals: 42\n")
+    func oneEvent() throws {
+        let dump = try CallgrindDump(text: "events: Ir\ntotals: 42\n")
         let expectedEvents: [CallgrindEvent] = [.instructionCacheReads]
         #expect(dump.events == expectedEvents)
         #expect(dump.totals[.dataCacheReads] == nil)
@@ -91,31 +91,31 @@ struct CallgrindDumpTests {
     }
 
     @Test("An event outside the simulated set keeps its abbreviation")
-    func unknownEvent() {
-        let dump = CallgrindDump(text: "events: Ir sysCount\ntotals: 10 3\n")
+    func unknownEvent() throws {
+        let dump = try CallgrindDump(text: "events: Ir sysCount\ntotals: 10 3\n")
         let syscalls = 3
-        #expect(dump[CallgrindEvent(rawValue: "sysCount")] == syscalls)
+        #expect(dump.totals[CallgrindEvent(rawValue: "sysCount")] == syscalls)
     }
 
     @Test("Lines end with LF or CRLF")
-    func lineEndings() {
-        let dump = CallgrindDump(text: "events: Ir Dr\r\ntotals: 5 6\r\n")
+    func lineEndings() throws {
+        let dump = try CallgrindDump(text: "events: Ir Dr\r\ntotals: 5 6\r\n")
         let reads = 6
-        #expect(dump[.dataCacheReads] == reads)
+        #expect(dump.totals[.dataCacheReads] == reads)
     }
 
     @Test("Equal text parses to equal dumps", .tags(.conformance))
-    func equality() {
-        let a = CallgrindDump(text: "events: Ir\ntotals: 1\n")
-        let b = CallgrindDump(text: "events:  Ir\n\ntotals: 1\n")
-        let c = CallgrindDump(text: "events: Ir\ntotals: 2\n")
+    func equality() throws {
+        let a = try CallgrindDump(text: "events: Ir\ntotals: 1\n")
+        let b = try CallgrindDump(text: "events:  Ir\n\ntotals: 1\n")
+        let c = try CallgrindDump(text: "events: Ir\ntotals: 2\n")
         #expect(a == b)
         #expect(a.hashValue == b.hashValue)
         #expect(a != c)
     }
 
-    @Test("The checked spelling throws MalformedCallgrindDump for text that is not a dump")
-    func checkedMalformed() {
+    @Test("Text that is not a dump throws MalformedCallgrindDump")
+    func malformed() {
         let malformed = [
             "",
             "totals: 1 2\n",
@@ -126,31 +126,8 @@ struct CallgrindDumpTests {
         ]
         for text in malformed {
             #expect(throws: MalformedCallgrindDump()) {
-                try CallgrindDump(checkedText: text)
+                try CallgrindDump(text: text)
             }
-        }
-    }
-
-    @Test("The checked spelling gives the same dump as the plain one")
-    func checkedAgreesWithPlain() throws {
-        let text = "events: Ir Bc\ndesc: Trigger: Program termination\ntotals: 4 2\n"
-        let plain = CallgrindDump(text: text)
-        let checked = try CallgrindDump(checkedText: text)
-        #expect(plain == checked)
-    }
-
-    @Test("The plain spelling traps on text that is not a dump", .tags(.precondition))
-    func plainMalformedTraps() async {
-        await #expect(processExitsWith: .failure) {
-            _ = CallgrindDump(text: "events: Ir\n")
-        }
-    }
-
-    @Test("Reading an event the dump does not count traps", .tags(.precondition))
-    func missingEventTraps() async {
-        await #expect(processExitsWith: .failure) {
-            let dump = CallgrindDump(text: "events: Ir\ntotals: 1\n")
-            _ = dump[.dataCacheReads]
         }
     }
 }
