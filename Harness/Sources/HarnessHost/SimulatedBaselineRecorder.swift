@@ -207,14 +207,9 @@ public struct SimulatedBaselineRecorder: Sendable {
         guard !selected.isEmpty else { throw NoBenchmarkTargets(available: available) }
 
         let build = ["swift", "build", "-c", "release", "--package-path", stagedPackage, "--scratch-path", scratch]
-        if selected == available {
-            FileHandle.standardError.write(Data("Building \(selected.joined(separator: ", "))\n".utf8))
-            try await machine.check(build, environment: network)
-        } else {
-            for target in selected {
-                FileHandle.standardError.write(Data("Building \(target)\n".utf8))
-                try await machine.check(build + ["--product", target], environment: network)
-            }
+        for (target, command) in zip(selected, Self.buildCommands(products: selected, build: build)) {
+            FileHandle.standardError.write(Data("Building \(target)\n".utf8))
+            try await machine.check(command, environment: network)
         }
         let binPath = String(decoding: try await machine.output(build + ["--show-bin-path"]), as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -364,6 +359,19 @@ public struct SimulatedBaselineRecorder: Sendable {
         let windowCost = overheadInstructions.isEmpty ? 0 : overheadInstructions[(overheadInstructions.count - 1) / 2]
         // Unbuffered, so progress shows while a long run continues.
         FileHandle.standardOutput.write(Data(("\(identifier.target): \(identifier.name) (\(iterations.count) iterations in \(elapsed.formatted(.units(allowed: [.minutes, .seconds], width: .narrow))), p50, less \(windowCost) instructions of measuring) — \(values.joined(separator: ", "))" + "\n").utf8))
+    }
+
+    /// The commands that build `products`, one each: `build` followed by `--product` and the
+    /// product's name.
+    ///
+    /// Only the benchmark executables and what they depend on get built, so another target that
+    /// doesn't build where the benchmarks run (a tool that needs macOS, say) can't stop the run.
+    /// SwiftPM's `--product` takes one product per build. The builds share a scratch path, so each
+    /// dependency compiles once.
+    ///
+    /// - Complexity: O(*n*), where *n* is the number of products.
+    package static func buildCommands(products: [String], build: [String]) -> [[String]] {
+        products.map { build + ["--product", $0] }
     }
 
     /// The benchmark targets in a `swift package dump-package` manifest: executable targets that

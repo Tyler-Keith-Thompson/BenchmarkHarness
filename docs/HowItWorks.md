@@ -2,7 +2,8 @@
 
 `benchmark-harness baseline update` builds every target of a package that uses ordo-one's
 `BenchmarkPlugin`, in release, on Linux: in a virtual machine on macOS (Apple's Containerization
-framework), on the host itself on Linux. It runs each benchmark executable, unchanged, under
+framework), on the host itself on Linux. It builds each of those targets as its own product, so
+the package's other targets are never built and need not compile on Linux. It runs each benchmark executable, unchanged, under
 Valgrind's Callgrind, speaking ordo-one's own runner protocol, and writes
 `.benchmarkBaselines/<target>/<name>/results.json`. `--target`, `--filter` and `--skip` narrow the
 run, as they do for `swift package benchmark`.

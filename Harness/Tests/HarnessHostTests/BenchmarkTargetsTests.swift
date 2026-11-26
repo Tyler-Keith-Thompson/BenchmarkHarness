@@ -28,6 +28,28 @@ struct BenchmarkTargetsTests {
         #expect(try SimulatedBaselineRecorder.benchmarkTargets(inManifest: manifest).isEmpty)
     }
 
+    @Test("Each benchmark target is built as its own product, so no other target in the package is built")
+    func buildCommands() {
+        let build = ["swift", "build", "-c", "release", "--package-path", "/work/Benchmarks"]
+        let expected = [
+            ["swift", "build", "-c", "release", "--package-path", "/work/Benchmarks", "--product", "ABenchmarks"],
+            ["swift", "build", "-c", "release", "--package-path", "/work/Benchmarks", "--product", "ZBenchmarks"],
+        ]
+
+        let actual = SimulatedBaselineRecorder.buildCommands(products: ["ABenchmarks", "ZBenchmarks"], build: build)
+
+        #expect(actual == expected)
+    }
+
+    @Test("No products means no builds")
+    func noBuildCommands() {
+        let build = ["swift", "build"]
+
+        let actual = SimulatedBaselineRecorder.buildCommands(products: [], build: build)
+
+        #expect(actual.isEmpty)
+    }
+
     @Test("Output that is not a manifest throws MalformedManifest")
     func malformed() {
         for text in ["", "{}", #"{"targets": 3}"#] {
