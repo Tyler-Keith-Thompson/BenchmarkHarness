@@ -4,7 +4,7 @@ BenchmarkHarness gives ordo-one/benchmark suites numbers that stay put on a busy
 `benchmark-harness` host tool (`Harness/`) runs benchmark executables, as declared, on Linux (a VM
 on macOS, the host itself on Linux) under Callgrind, and writes the simulated counts as an ordo-one
 baseline. It optimizes for run-to-run stability over wall-clock realism; the owner uses it across
-many projects that benchmark concurrently. Swift 6.3 (minimum).
+many projects that benchmark concurrently. Swift 6.4 (minimum).
 Bazel is the development build; SwiftPM is the published package. `README.md` is the user-facing
 overview.
 

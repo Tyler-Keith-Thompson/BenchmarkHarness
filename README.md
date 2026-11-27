@@ -9,7 +9,7 @@ writes the counts as an ordinary ordo-one baseline.
 
 - macOS 26 on Apple silicon (the tool runs the benchmarks in a Linux virtual machine), or Linux
   on aarch64 (the tool runs them on the host, for example a CI runner).
-- Swift 6.3.
+- Swift 6.4.
 - A package whose benchmarks use ordo-one/benchmark. Nothing in them changes. On macOS the
   virtual machine builds it with Swift 6.4.2 on Ubuntu 24.04, so its tools version can be
   anything up to 6.4; on Linux it builds with the host's Swift.
@@ -71,7 +71,7 @@ baseline committed from `main`:
 jobs:
   benchmarks:
     runs-on: ubuntu-26.04-arm
-    container: swift:6.3
+    container: swift:6.4
     steps:
       - uses: actions/checkout@v7
       - name: Install benchmark-harness

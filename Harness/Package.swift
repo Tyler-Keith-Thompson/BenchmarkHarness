@@ -1,4 +1,4 @@
-// swift-tools-version: 6.3
+// swift-tools-version: 6.4
 import PackageDescription
 
 // The host tool, in a package of its own. On macOS it boots a Linux virtual machine through Apple's

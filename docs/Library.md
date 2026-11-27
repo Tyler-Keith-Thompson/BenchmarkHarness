@@ -4,7 +4,7 @@ The modules that read Callgrind's dumps and write ordo-one's baselines are also 
 for tools that want to record simulated baselines themselves. Most people only need the
 `benchmark-harness` tool ([README](../README.md)).
 
-The library requires Swift 6.3 and supports macOS 15, iOS 18, tvOS 18, watchOS 11 and visionOS 2
+The library requires Swift 6.4 and supports macOS 15, iOS 18, tvOS 18, watchOS 11 and visionOS 2
 or later, and Linux.
 
 ```swift
